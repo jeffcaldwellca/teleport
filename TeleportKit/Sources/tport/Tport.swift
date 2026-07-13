@@ -8,6 +8,8 @@ struct Tport: AsyncParsableCommand {
         subcommands: [
             LsCommand.self,
             StatCommand.self,
+            GetCommand.self,
+            PutCommand.self,
             TestCommand.self,
         ]
     )
