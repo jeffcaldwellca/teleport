@@ -24,6 +24,7 @@
 		78CE24C6D6DEDCC0B1FBE5A4 /* TransferTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEB2D57BE0A49B776D48D69 /* TransferTask.swift */; };
 		7DACB011B15E4F27D8568BC1 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DD1DDDDA4F5165D7641F5A3 /* Preferences.swift */; };
 		8B8949B88D01454D221D546B /* FileRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70CA4CDC200A3CC76A613853 /* FileRowView.swift */; };
+		902E9599438C55DED1A62649 /* CLIIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */; };
 		96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */; };
 		AB175E51C7A877DE631DFB97 /* TransferQueueViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */; };
 		C4CFC4E0D839F6B4FA5B9EC1 /* TransferQueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD4A1EA2F79A462094CD5EA8 /* TransferQueueView.swift */; };
@@ -76,6 +77,7 @@
 		9DF086A1C6447D89589EFB4A /* FileItemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileItemTests.swift; sourceTree = "<group>"; };
 		A1B5C495F8B904DE060F56C9 /* TeleportApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeleportApp.swift; sourceTree = "<group>"; };
 		B064B88C8149977A91AB511C /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIIntegrationTests.swift; sourceTree = "<group>"; };
 		B790A3DA6A5093A87661D377 /* RemoteFileRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFileRef.swift; sourceTree = "<group>"; };
 		BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteEditManager.swift; sourceTree = "<group>"; };
 		C1263184A33142977C401CA1 /* SSHKeyFingerprintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyFingerprintTests.swift; sourceTree = "<group>"; };
@@ -171,6 +173,7 @@
 		BCD524C221725BF20305EA81 /* TeleportTests */ = {
 			isa = PBXGroup;
 			children = (
+				B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */,
 				9DF086A1C6447D89589EFB4A /* FileItemTests.swift */,
 				29BED02A2BEF9C1D88E357CF /* RemotePathTests.swift */,
 				9CC2C4189808F11BDE3E78AA /* SSHHostKeyStoreTests.swift */,
@@ -337,6 +340,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				902E9599438C55DED1A62649 /* CLIIntegrationTests.swift in Sources */,
 				D30B93CF87BD5440EA11535C /* FileItemTests.swift in Sources */,
 				FF7A676BB7183BB16001B57A /* RemotePathTests.swift in Sources */,
 				46B17803D4BAF873DDB5CD32 /* SSHHostKeyStoreTests.swift in Sources */,
