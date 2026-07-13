@@ -375,9 +375,13 @@ public actor SFTPClient: RemoteClient {
 
     public func setPermissions(_ octal: Int, at absolutePath: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
+        // UInt32(Int) traps on a negative value — reject it instead of crashing.
+        guard let unsigned = UInt32(exactly: octal) else {
+            throw RemoteClientError.unsupported("'\(octal)' isn't a valid permission value")
+        }
         var attrs = SFTPFileAttributes()
         // Mask off file-type bits — only mode bits are settable per POSIX.
-        attrs.permissions = UInt32(octal) & 0o7777
+        attrs.permissions = unsigned & 0o7777
         try await sftp.setAttributes(at: absolutePath, to: attrs)
     }
 
