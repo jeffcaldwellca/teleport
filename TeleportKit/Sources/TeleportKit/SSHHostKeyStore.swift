@@ -9,7 +9,12 @@ import Citadel
 /// tests and other short-lived, isolated trust decisions.
 public actor SSHHostKeyStore {
 
-    public static let shared = SSHHostKeyStore(storeURL: defaultAppSupportURL)
+    /// Recomputes `defaultAppSupportURL` fresh on every persist, not just at
+    /// `.shared`'s first access — so a transient failure to resolve/create the
+    /// Application Support directory (disk full, container not yet mounted)
+    /// self-heals on the next write instead of permanently disabling
+    /// persistence for the rest of the process.
+    public static let shared = SSHHostKeyStore(storeURLProvider: { defaultAppSupportURL })
 
     private struct Entry: Codable {
         var fingerprint: String   // "SHA256:<hex>"
@@ -21,12 +26,16 @@ public actor SSHHostKeyStore {
         var entries: [String: Entry] = [:]
     }
 
-    private let storeURL: URL?
+    private let storeURLProvider: () -> URL?
     private var file: File?
     private var loaded = false
 
     public init(storeURL: URL?) {
-        self.storeURL = storeURL
+        self.storeURLProvider = { storeURL }
+    }
+
+    private init(storeURLProvider: @escaping () -> URL?) {
+        self.storeURLProvider = storeURLProvider
     }
 
     /// Returns the stored fingerprint for `host:port`, or `nil` if none.
@@ -37,33 +46,32 @@ public actor SSHHostKeyStore {
 
     /// Records `fingerprint` as trusted for `host:port`. Overwrites any prior entry.
     public func record(host: String, port: Int, fingerprint: String) throws {
-        ensureLoaded()
-        if file == nil { file = File() }
-        file?.entries[Self.key(host: host, port: port)] = Entry(
-            fingerprint: fingerprint, firstSeen: Date()
-        )
-        try persist()
+        try mutate { file in
+            file.entries[Self.key(host: host, port: port)] = Entry(
+                fingerprint: fingerprint, firstSeen: Date()
+            )
+        }
     }
 
     /// Forgets the stored entry for `host:port`, if any.
     public func forget(host: String, port: Int) throws {
-        ensureLoaded()
-        file?.entries.removeValue(forKey: Self.key(host: host, port: port))
-        try persist()
+        try mutate { file in
+            file.entries.removeValue(forKey: Self.key(host: host, port: port))
+        }
     }
 
     /// Forgets the entry identified by its `"host:port"` key.
     public func forget(id: String) throws {
-        ensureLoaded()
-        file?.entries.removeValue(forKey: id)
-        try persist()
+        try mutate { file in
+            file.entries.removeValue(forKey: id)
+        }
     }
 
     /// Forgets every trusted host key.
     public func forgetAll() throws {
-        ensureLoaded()
-        file?.entries.removeAll()
-        try persist()
+        try mutate { file in
+            file.entries.removeAll()
+        }
     }
 
     /// A trusted host, for display/management in Settings.
@@ -107,25 +115,41 @@ public actor SSHHostKeyStore {
         return dir.appending(component: "known_hosts.json")
     }
 
+    private func decodeFile(at url: URL) -> File? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(File.self, from: data)
+    }
+
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
-        guard let url = storeURL,
-              let data = try? Data(contentsOf: url) else {
-            file = File()
-            return
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let decoded = try? decoder.decode(File.self, from: data) {
-            file = decoded
+        guard let url = storeURLProvider() else { file = File(); return }
+        file = decodeFile(at: url) ?? File()
+    }
+
+    /// Applies `change` to the freshest on-disk state (re-read right before
+    /// writing, not the possibly-stale in-memory snapshot from an earlier
+    /// `ensureLoaded()`) and persists the result. This narrows — though,
+    /// without an OS-level file lock, doesn't fully eliminate — the
+    /// lost-update window when multiple `tport` processes trust different
+    /// new hosts concurrently against the same `known_hosts.json`.
+    private func mutate(_ change: (inout File) -> Void) throws {
+        var current: File
+        if let url = storeURLProvider() {
+            current = decodeFile(at: url) ?? file ?? File()
         } else {
-            file = File()
+            current = file ?? File()
         }
+        change(&current)
+        file = current
+        loaded = true
+        try persist()
     }
 
     private func persist() throws {
-        guard let file = file, let url = storeURL else { return }
+        guard let file = file, let url = storeURLProvider() else { return }
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true
         )
