@@ -315,7 +315,7 @@ final class TransferIntegrationTests: XCTestCase {
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 12_000_000)
         let remotePath = "/upload/pause-\(UUID().uuidString).bin"
 
-        let client = SFTPClient(connection: sftpConnection(), password: Self.password)
+        let client = sftpTestClient()
         try await client.connect()
         try await client.upload(from: original, remotePath: remotePath, resume: false) { _, _ in }
         await client.disconnect()
