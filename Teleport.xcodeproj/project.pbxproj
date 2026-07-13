@@ -7,12 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		015BF9CF70261BA13BD8B6B3 /* TeleportKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8DF44A768E6C7EF2D69B0C4E /* TeleportKit */; };
 		02E861DAAB731A7D4951251A /* RemoteFileRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = B790A3DA6A5093A87661D377 /* RemoteFileRef.swift */; };
 		09440E434B76FB9A5E4AFFB4 /* LocalFileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E96876EED7F3FDEB70CE6F8 /* LocalFileService.swift */; };
 		10835E45BC0770434546BFB5 /* HostKeyConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */; };
 		278BD8FAB7B0BCED7A6E2CC4 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 801B05886CD72901068956E5 /* AppState.swift */; };
 		3ED390AE22DCD16CC13BBF2C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8D05848D64FCD686BABC00 /* ContentView.swift */; };
+		46B17803D4BAF873DDB5CD32 /* SSHHostKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CC2C4189808F11BDE3E78AA /* SSHHostKeyStoreTests.swift */; };
 		4733F7D2AFD12E11DDBF6F48 /* BrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B4C6C54C5E2B2010633CE0 /* BrowserViewModel.swift */; };
 		4E8F6B483556E5D5406B6903 /* BrowserPaneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB32E3DF50C2FF41DB52C79 /* BrowserPaneView.swift */; };
 		4FFFBC42FC7038AB686547AD /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B064B88C8149977A91AB511C /* KeychainService.swift */; };
@@ -72,6 +72,7 @@
 		8789D60011F8B14C7DD9B4D4 /* Teleport.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Teleport.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyConfirmation.swift; sourceTree = "<group>"; };
 		9CA01CB3D387DD75FE765260 /* BookmarkStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkStore.swift; sourceTree = "<group>"; };
+		9CC2C4189808F11BDE3E78AA /* SSHHostKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyStoreTests.swift; sourceTree = "<group>"; };
 		9DF086A1C6447D89589EFB4A /* FileItemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileItemTests.swift; sourceTree = "<group>"; };
 		A1B5C495F8B904DE060F56C9 /* TeleportApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeleportApp.swift; sourceTree = "<group>"; };
 		B064B88C8149977A91AB511C /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
@@ -91,14 +92,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				DA5DE72C94AAF23423A9BFD8 /* TeleportKit in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		C83CEDD3AF736370BAB0D913 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				015BF9CF70261BA13BD8B6B3 /* TeleportKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -180,6 +173,7 @@
 			children = (
 				9DF086A1C6447D89589EFB4A /* FileItemTests.swift */,
 				29BED02A2BEF9C1D88E357CF /* RemotePathTests.swift */,
+				9CC2C4189808F11BDE3E78AA /* SSHHostKeyStoreTests.swift */,
 				C1263184A33142977C401CA1 /* SSHKeyFingerprintTests.swift */,
 				75497495FECF0CA0E9CE8AA2 /* TransferIntegrationTests.swift */,
 			);
@@ -257,7 +251,6 @@
 			buildConfigurationList = 9919FCE0F18FF0600E2CC2F3 /* Build configuration list for PBXNativeTarget "TeleportTests" */;
 			buildPhases = (
 				499C97A90431989D4C0504CB /* Sources */,
-				C83CEDD3AF736370BAB0D913 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -266,7 +259,6 @@
 			);
 			name = TeleportTests;
 			packageProductDependencies = (
-				8DF44A768E6C7EF2D69B0C4E /* TeleportKit */,
 			);
 			productName = TeleportTests;
 			productReference = 63EE900E42C5EE5922F84386 /* TeleportTests.xctest */;
@@ -347,6 +339,7 @@
 			files = (
 				D30B93CF87BD5440EA11535C /* FileItemTests.swift in Sources */,
 				FF7A676BB7183BB16001B57A /* RemotePathTests.swift in Sources */,
+				46B17803D4BAF873DDB5CD32 /* SSHHostKeyStoreTests.swift in Sources */,
 				DB208E379D30A191C51F1ADF /* SSHKeyFingerprintTests.swift in Sources */,
 				D7419D108712F17D64859021 /* TransferIntegrationTests.swift in Sources */,
 			);
@@ -632,10 +625,6 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		7D1F44164055EF78491D6E26 /* TeleportKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = TeleportKit;
-		};
-		8DF44A768E6C7EF2D69B0C4E /* TeleportKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TeleportKit;
 		};

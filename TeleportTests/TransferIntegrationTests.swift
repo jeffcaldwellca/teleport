@@ -1,5 +1,6 @@
 import XCTest
 import CryptoKit
+import TeleportKit
 @testable import Teleport
 
 /// Live-server integration tests for the transfer engine. Skipped unless
@@ -60,8 +61,11 @@ final class TransferIntegrationTests: XCTestCase {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// SFTP first-use host-key prompts are answered by the UI; in tests,
-    /// auto-accept them so connect() doesn't wait forever on a sheet.
+    /// Only `test_queue_pauseResume_sftp_producesIdenticalFile` still needs this:
+    /// it exercises the queue end-to-end through the app's real
+    /// `RemoteClientFactory`, which wires `SFTPClient`'s `onUnknownHostKey` to
+    /// this UI dialog. Every other SFTP test constructs `SFTPClient` directly
+    /// via `sftpTestClient()` below and injects trust without a dialog.
     private func autoAcceptHostKeys() -> Task<Void, Never> {
         Task { @MainActor in
             while !Task.isCancelled {
@@ -71,6 +75,18 @@ final class TransferIntegrationTests: XCTestCase {
                 try? await Task.sleep(for: .milliseconds(50))
             }
         }
+    }
+
+    /// An `SFTPClient` for direct (non-queue) tests: an in-memory-only
+    /// known-hosts store (never persisted, so each test run starts with no
+    /// prior trust) and an unconditional accept in place of the GUI dialog.
+    private func sftpTestClient() -> SFTPClient {
+        SFTPClient(
+            connection: sftpConnection(),
+            password: Self.password,
+            hostKeyStore: SSHHostKeyStore(storeURL: nil),
+            onUnknownHostKey: { _, _, _ in true }
+        )
     }
 
     private func roundTrip(
@@ -206,13 +222,11 @@ final class TransferIntegrationTests: XCTestCase {
 
     func test_sftp_uploadDownloadRoundTrip() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
 
         let dir = try makeTempDir()
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 1_500_000)
 
-        let client = SFTPClient(connection: sftpConnection(), password: Self.password)
+        let client = sftpTestClient()
         try await client.connect()
         defer { Task { await client.disconnect() } }
 
@@ -223,14 +237,12 @@ final class TransferIntegrationTests: XCTestCase {
 
     func test_sftp_downloadResume_producesIdenticalFile() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
 
         let dir = try makeTempDir()
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 1_000_000)
         let remotePath = "/upload/resume-dl-\(UUID().uuidString).bin"
 
-        let client = SFTPClient(connection: sftpConnection(), password: Self.password)
+        let client = sftpTestClient()
         try await client.connect()
         defer { Task { await client.disconnect() } }
 
@@ -246,14 +258,12 @@ final class TransferIntegrationTests: XCTestCase {
 
     func test_sftp_uploadResume_producesIdenticalFile() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
 
         let dir = try makeTempDir()
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 1_000_000)
         let remotePath = "/upload/resume-ul-\(UUID().uuidString).bin"
 
-        let client = SFTPClient(connection: sftpConnection(), password: Self.password)
+        let client = sftpTestClient()
         try await client.connect()
         defer { Task { await client.disconnect() } }
 
@@ -271,14 +281,12 @@ final class TransferIntegrationTests: XCTestCase {
 
     func test_sftp_setModifiedDate_roundTrip() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
 
         let dir = try makeTempDir()
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 10_000)
         let remotePath = "/upload/mtime-\(UUID().uuidString).bin"
 
-        let client = SFTPClient(connection: sftpConnection(), password: Self.password)
+        let client = sftpTestClient()
         try await client.connect()
         defer { Task { await client.disconnect() } }
 
@@ -354,10 +362,8 @@ final class TransferIntegrationTests: XCTestCase {
 
     func test_sftp_reconnect_reusesClientSafely() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
 
-        let client = SFTPClient(connection: sftpConnection(), password: Self.password)
+        let client = sftpTestClient()
         try await client.connect()
         // The browser's self-heal path calls connect() on an existing client —
         // must not leak or fail.

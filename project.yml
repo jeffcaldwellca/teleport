@@ -52,8 +52,6 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Teleport
-      - package: TeleportKit
-        product: TeleportKit
 
 schemes:
   Teleport:
