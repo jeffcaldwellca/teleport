@@ -18,17 +18,16 @@ struct MkdirCommand: AsyncParsableCommand {
         try await runTport {
             let target = try RemoteTarget.parse(url)
             let client = try auth.makeClient(for: target)
-            try await client.connect()
-            defer { Task { await client.disconnect() } }
-
-            if parents {
-                var accumulated = ""
-                for component in target.path.split(separator: "/") {
-                    accumulated += "/\(component)"
-                    try? await client.createDirectory(at: accumulated)
+            try await withConnectedClient(client) { client in
+                if parents {
+                    var accumulated = ""
+                    for component in target.path.split(separator: "/") {
+                        accumulated += "/\(component)"
+                        try? await client.createDirectory(at: accumulated)
+                    }
+                } else {
+                    try await client.createDirectory(at: target.path)
                 }
-            } else {
-                try await client.createDirectory(at: target.path)
             }
         }
     }

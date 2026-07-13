@@ -21,9 +21,9 @@ struct ChownCommand: AsyncParsableCommand {
         try await runTport {
             let target = try RemoteTarget.parse(url)
             let client = try auth.makeClient(for: target)
-            try await client.connect()
-            defer { Task { await client.disconnect() } }
-            try await client.setOwnership(owner: owner, group: group, at: target.path)
+            try await withConnectedClient(client) { client in
+                try await client.setOwnership(owner: owner, group: group, at: target.path)
+            }
         }
     }
 }

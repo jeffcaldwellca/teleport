@@ -14,9 +14,9 @@ struct TestCommand: AsyncParsableCommand {
         try await runTport {
             let target = try RemoteTarget.parse(url)
             let client = try auth.makeClient(for: target)
-            try await client.connect()
-            await client.disconnect()
-            if !global.quiet { print("ok") }
+            try await withConnectedClient(client) { _ in
+                if !global.quiet { print("ok") }
+            }
         }
     }
 }

@@ -22,9 +22,9 @@ struct MvCommand: AsyncParsableCommand {
                 throw TportUsageError.missingCredentials("mv requires source and destination on the same host:port")
             }
             let client = try auth.makeClient(for: from)
-            try await client.connect()
-            defer { Task { await client.disconnect() } }
-            try await client.rename(from: from.path, to: to.path)
+            try await withConnectedClient(client) { client in
+                try await client.rename(from: from.path, to: to.path)
+            }
         }
     }
 }
