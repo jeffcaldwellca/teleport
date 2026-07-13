@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build a production (Release) Teleport.app from the current working tree.
+# Build a production (Release) Teleport.app and the tport CLI from the
+# current working tree.
 #
 # Usage:
 #   scripts/build-release.sh           # build Release into ./build
@@ -107,6 +108,16 @@ fi
 FINAL_APP="$BUILD_DIR/$SCHEME.app"
 echo "==> copying $SCHEME.app to $FINAL_APP"
 ditto "$APP_PATH" "$FINAL_APP"
+
+echo "==> building tport (Release)"
+(cd "$REPO_ROOT/TeleportKit" && swift build -c release --product tport)
+TPORT_BUILT="$REPO_ROOT/TeleportKit/.build/release/tport"
+if [[ ! -f "$TPORT_BUILT" ]]; then
+    echo "error: tport build succeeded but $TPORT_BUILT was not produced" >&2
+    exit 1
+fi
+cp "$TPORT_BUILT" "$BUILD_DIR/tport"
+echo "   $BUILD_DIR/tport"
 
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$FINAL_APP/Contents/Info.plist" 2>/dev/null || echo "?")
 BUILD_NO=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$FINAL_APP/Contents/Info.plist" 2>/dev/null || echo "?")
