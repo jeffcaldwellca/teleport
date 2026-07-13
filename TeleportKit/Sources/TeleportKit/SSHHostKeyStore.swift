@@ -115,7 +115,9 @@ public actor SSHHostKeyStore {
             file = File()
             return
         }
-        if let decoded = try? JSONDecoder().decode(File.self, from: data) {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let decoded = try? decoder.decode(File.self, from: data) {
             file = decoded
         } else {
             file = File()

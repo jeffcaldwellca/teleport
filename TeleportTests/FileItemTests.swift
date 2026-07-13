@@ -1,5 +1,5 @@
 import XCTest
-@testable import Teleport
+import TeleportKit
 
 final class FileItemTests: XCTestCase {
 
