@@ -12,5 +12,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "TeleportKit", dependencies: ["Citadel"]),
+        .target(name: "TeleportCLICore", dependencies: ["TeleportKit"]),
+        .testTarget(name: "TeleportCLICoreTests", dependencies: ["TeleportCLICore"]),
     ]
 )
