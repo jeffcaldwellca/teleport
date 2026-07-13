@@ -5,10 +5,11 @@ import NIOSSH
 import Citadel
 
 /// Persistent record of trusted SSH host keys, keyed by `host:port`.
-/// Stored as JSON under `Application Support/Teleport/known_hosts.json`.
-actor SSHHostKeyStore {
+/// A `nil` `storeURL` means "in-memory only, never persisted" — useful for
+/// tests and other short-lived, isolated trust decisions.
+public actor SSHHostKeyStore {
 
-    static let shared = SSHHostKeyStore()
+    public static let shared = SSHHostKeyStore(storeURL: defaultAppSupportURL)
 
     private struct Entry: Codable {
         var fingerprint: String   // "SHA256:<hex>"
@@ -20,17 +21,22 @@ actor SSHHostKeyStore {
         var entries: [String: Entry] = [:]
     }
 
+    private let storeURL: URL?
     private var file: File?
     private var loaded = false
 
+    public init(storeURL: URL?) {
+        self.storeURL = storeURL
+    }
+
     /// Returns the stored fingerprint for `host:port`, or `nil` if none.
-    func fingerprint(for host: String, port: Int) -> String? {
+    public func fingerprint(for host: String, port: Int) -> String? {
         ensureLoaded()
         return file?.entries[Self.key(host: host, port: port)]?.fingerprint
     }
 
     /// Records `fingerprint` as trusted for `host:port`. Overwrites any prior entry.
-    func record(host: String, port: Int, fingerprint: String) throws {
+    public func record(host: String, port: Int, fingerprint: String) throws {
         ensureLoaded()
         if file == nil { file = File() }
         file?.entries[Self.key(host: host, port: port)] = Entry(
@@ -40,37 +46,37 @@ actor SSHHostKeyStore {
     }
 
     /// Forgets the stored entry for `host:port`, if any.
-    func forget(host: String, port: Int) throws {
+    public func forget(host: String, port: Int) throws {
         ensureLoaded()
         file?.entries.removeValue(forKey: Self.key(host: host, port: port))
         try persist()
     }
 
     /// Forgets the entry identified by its `"host:port"` key.
-    func forget(id: String) throws {
+    public func forget(id: String) throws {
         ensureLoaded()
         file?.entries.removeValue(forKey: id)
         try persist()
     }
 
     /// Forgets every trusted host key.
-    func forgetAll() throws {
+    public func forgetAll() throws {
         ensureLoaded()
         file?.entries.removeAll()
         try persist()
     }
 
     /// A trusted host, for display/management in Settings.
-    struct TrustedHost: Identifiable, Sendable {
-        let id: String          // "host:port"
-        let host: String
-        let port: Int
-        let fingerprint: String
-        let firstSeen: Date
+    public struct TrustedHost: Identifiable, Sendable {
+        public let id: String          // "host:port"
+        public let host: String
+        public let port: Int
+        public let fingerprint: String
+        public let firstSeen: Date
     }
 
     /// All trusted host keys, sorted by host.
-    func trustedHosts() -> [TrustedHost] {
+    public func trustedHosts() -> [TrustedHost] {
         ensureLoaded()
         let entries = file?.entries ?? [:]
         return entries.map { key, entry in
@@ -89,7 +95,7 @@ actor SSHHostKeyStore {
 
     private static func key(host: String, port: Int) -> String { "\(host):\(port)" }
 
-    private static var storeURL: URL? {
+    private static var defaultAppSupportURL: URL? {
         guard let support = try? FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -104,7 +110,7 @@ actor SSHHostKeyStore {
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
-        guard let url = Self.storeURL,
+        guard let url = storeURL,
               let data = try? Data(contentsOf: url) else {
             file = File()
             return
@@ -117,7 +123,10 @@ actor SSHHostKeyStore {
     }
 
     private func persist() throws {
-        guard let file = file, let url = Self.storeURL else { return }
+        guard let file = file, let url = storeURL else { return }
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -128,9 +137,9 @@ actor SSHHostKeyStore {
 
 // MARK: - Fingerprint helpers
 
-enum SSHKeyFingerprint {
+public enum SSHKeyFingerprint {
     /// Compute the OpenSSH-style SHA256 fingerprint for a public key.
-    static func sha256(of key: NIOSSHPublicKey) -> String {
+    public static func sha256(of key: NIOSSHPublicKey) -> String {
         var buf = ByteBufferAllocator().buffer(capacity: 256)
         _ = key.write(to: &buf)
         let bytes = buf.readBytes(length: buf.readableBytes) ?? []
@@ -139,7 +148,7 @@ enum SSHKeyFingerprint {
     }
 
     /// Friendlier display: groups of two hex digits separated by colons.
-    static func display(_ fingerprint: String) -> String {
+    public static func display(_ fingerprint: String) -> String {
         guard fingerprint.hasPrefix("SHA256:") else { return fingerprint }
         let hex = String(fingerprint.dropFirst("SHA256:".count))
         var pairs: [String] = []
@@ -159,28 +168,30 @@ enum SSHKeyFingerprint {
 ///   * captures the server's host-key fingerprint synchronously, and
 ///   * fails the handshake if a previously-trusted fingerprint doesn't match.
 ///
-/// First-use confirmation is *not* done here — that requires UI and is handled
-/// in `SFTPClient.connect`, which runs a one-shot connection with `expected = nil`
-/// to capture the fingerprint, then prompts the user before recording it.
-final class CapturingHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+/// First-use confirmation is *not* done here — that requires a trust decision
+/// (a UI dialog for the GUI, a flag check for the CLI) and is handled by the
+/// `onUnknownHostKey` closure injected into `SFTPClient.connect`, which runs a
+/// one-shot connection with `expected = nil` to capture the fingerprint, then
+/// asks the closure before recording it.
+public final class CapturingHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
 
     /// Set when constructed for a known-host connection. Mismatch → handshake fails.
-    let expected: String?
+    public let expected: String?
 
     private let lock = NSLock()
     private var _captured: String?
 
-    init(expected: String? = nil) {
+    public init(expected: String? = nil) {
         self.expected = expected
     }
 
     /// Fingerprint captured during the handshake (if any).
-    var captured: String? {
+    public var captured: String? {
         lock.lock(); defer { lock.unlock() }
         return _captured
     }
 
-    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+    public func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         let fingerprint = SSHKeyFingerprint.sha256(of: hostKey)
         lock.lock()
         _captured = fingerprint
@@ -196,11 +207,11 @@ final class CapturingHostKeyValidator: NIOSSHClientServerAuthenticationDelegate,
     }
 }
 
-struct HostKeyMismatchError: LocalizedError {
-    let expected: String
-    let actual: String
+public struct HostKeyMismatchError: LocalizedError {
+    public let expected: String
+    public let actual: String
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         "SSH host key changed — possible MITM attack. Expected \(SSHKeyFingerprint.display(expected)), got \(SSHKeyFingerprint.display(actual))."
     }
 }

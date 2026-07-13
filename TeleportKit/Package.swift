@@ -7,8 +7,10 @@ let package = Package(
     products: [
         .library(name: "TeleportKit", targets: ["TeleportKit"]),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/orlandos-nl/Citadel", from: "0.8.0"),
+    ],
     targets: [
-        .target(name: "TeleportKit", dependencies: []),
+        .target(name: "TeleportKit", dependencies: ["Citadel"]),
     ]
 )

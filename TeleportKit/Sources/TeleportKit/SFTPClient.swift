@@ -9,22 +9,46 @@ import NIOCore
 import NIOPosix
 import Darwin
 
-actor SFTPClient: RemoteClient {
+public actor SFTPClient: RemoteClient {
 
     private let connection: Connection
     private let password: String
+    private let hostKeyStore: SSHHostKeyStore
+    private let keyReader: @Sendable (URL) async throws -> Data
+    private let onUnknownHostKey: @Sendable (String, Int, String) async -> Bool
 
     private var ssh: SSHClient?
     private var sftp: Citadel.SFTPClient?
 
-    init(connection: Connection, password: String) {
+    /// - Parameters:
+    ///   - hostKeyStore: where trusted host-key fingerprints are looked up and
+    ///     recorded. Defaults to `.shared` (the app's Application Support
+    ///     store) purely as a harmless default for ad hoc/test use — real
+    ///     callers should pass one explicitly when the default's persistence
+    ///     location matters.
+    ///   - keyReader: reads the bytes of an SSH private key file. Defaults to
+    ///     a plain `Data(contentsOf:)`. The GUI app supplies a closure that
+    ///     tries a sandbox-scoped bookmark first, falling back to a direct read.
+    ///   - onUnknownHostKey: asked to trust a host key seen for the first time
+    ///     (host, port, fingerprint) → trust? Defaults to `false` (fail closed).
+    ///     The GUI app supplies a closure that shows a confirmation dialog.
+    public init(
+        connection: Connection,
+        password: String,
+        hostKeyStore: SSHHostKeyStore = .shared,
+        keyReader: @escaping @Sendable (URL) async throws -> Data = { url in try Data(contentsOf: url) },
+        onUnknownHostKey: @escaping @Sendable (String, Int, String) async -> Bool = { _, _, _ in false }
+    ) {
         self.connection = connection
         self.password   = password
+        self.hostKeyStore = hostKeyStore
+        self.keyReader = keyReader
+        self.onUnknownHostKey = onUnknownHostKey
     }
 
     // MARK: - Connect
 
-    func connect() async throws {
+    public func connect() async throws {
         // Reconnect-safe: tear down any previous session first so a reconnect
         // (e.g. the browser's self-heal path) doesn't leak the old SSH channel
         // and its NIO resources.
@@ -36,10 +60,9 @@ actor SFTPClient: RemoteClient {
         //   1. Look up any previously-trusted fingerprint for this host:port.
         //   2. Connect with a CapturingHostKeyValidator. If `expected` is set,
         //      mismatch fails the handshake (MITM defence).
-        //   3. On a first-use connection, prompt the user before recording the
-        //      key. Reject closes the connection.
-        let store = SSHHostKeyStore.shared
-        let expected = await store.fingerprint(for: connection.host, port: connection.port)
+        //   3. On a first-use connection, ask `onUnknownHostKey` before
+        //      recording it. Declining leaves the connection closed.
+        let expected = await hostKeyStore.fingerprint(for: connection.host, port: connection.port)
         let validator = CapturingHostKeyValidator(expected: expected)
 
         let client: SSHClient
@@ -52,30 +75,25 @@ actor SFTPClient: RemoteClient {
                 reconnect: .never
             )
         } catch let mismatch as HostKeyMismatchError {
-            throw RemoteClientError.unknown(
-                "Host key for \(connection.host):\(connection.port) has changed — possible MITM attack. " +
-                "Expected \(SSHKeyFingerprint.display(mismatch.expected)), saw \(SSHKeyFingerprint.display(mismatch.actual)). " +
-                "If the change is legitimate, remove the saved key from Settings and reconnect."
+            throw RemoteClientError.hostKeyMismatch(
+                host: connection.host, port: connection.port,
+                expected: mismatch.expected, actual: mismatch.actual
             )
         }
         ssh = client
 
         // First-use confirmation (no expected fingerprint in store).
         if expected == nil, let captured = validator.captured {
-            let trusted = await HostKeyConfirmation.shared.confirm(
-                host: connection.host,
-                port: connection.port,
-                fingerprint: captured
-            )
+            let trusted = await onUnknownHostKey(connection.host, connection.port, captured)
             guard trusted else {
                 try? await client.close()
                 ssh = nil
-                throw RemoteClientError.unknown(
-                    "Host key for \(connection.host):\(connection.port) was not trusted by the user."
+                throw RemoteClientError.hostKeyUntrusted(
+                    host: connection.host, port: connection.port, fingerprint: captured
                 )
             }
             do {
-                try await store.record(
+                try await hostKeyStore.record(
                     host: connection.host, port: connection.port, fingerprint: captured
                 )
             } catch {
@@ -103,7 +121,7 @@ actor SFTPClient: RemoteClient {
 
     private func buildKeyAuth(user: String) async throws -> SSHAuthenticationMethod {
         let keyURL = URL(fileURLWithPath: (connection.sshKeyPath as NSString).expandingTildeInPath)
-        let keyData = try await readKeyData(at: keyURL)
+        let keyData = try await keyReader(keyURL)
 
         guard let keyString = String(data: keyData, encoding: .utf8) else {
             throw RemoteClientError.unsupported(
@@ -135,33 +153,9 @@ actor SFTPClient: RemoteClient {
         )
     }
 
-    /// Read the user's private key. First tries a security-scoped bookmark
-    /// captured during file selection (works under App Sandbox); falls back
-    /// to a direct read for legacy/non-sandbox builds and for keys saved as
-    /// paths before bookmark support landed.
-    private func readKeyData(at fallbackURL: URL) async throws -> Data {
-        let connectionID = connection.id
-        // Hop to MainActor for BookmarkStore access (it's @MainActor-isolated).
-        if let data = await MainActor.run(body: {
-            try? BookmarkStore.shared.withAccess(name: BookmarkStore.sshKeyName(for: connectionID)) { url in
-                try Data(contentsOf: url)
-            }
-        }) ?? nil {
-            return data
-        }
-        do {
-            return try Data(contentsOf: fallbackURL)
-        } catch {
-            throw RemoteClientError.unknown(
-                "Could not read SSH key at \(fallbackURL.path): \(error.localizedDescription). " +
-                "Try selecting the key again from the connection editor so the app can store a sandbox-friendly bookmark."
-            )
-        }
-    }
-
     // MARK: - Disconnect
 
-    func disconnect() async {
+    public func disconnect() async {
         try? await sftp?.close()
         try? await ssh?.close()
         sftp = nil
@@ -170,7 +164,7 @@ actor SFTPClient: RemoteClient {
 
     // MARK: - List Directory
 
-    func listDirectory(at absolutePath: String) async throws -> [FileItem] {
+    public func listDirectory(at absolutePath: String) async throws -> [FileItem] {
         guard let sftp else { throw RemoteClientError.notConnected }
 
         // listDirectory returns [SFTPMessage.Name]; each Name contains a batch of SFTPPathComponent entries
@@ -200,7 +194,7 @@ actor SFTPClient: RemoteClient {
 
     // MARK: - Download
 
-    func download(
+    public func download(
         remotePath: String,
         to localURL: URL,
         resume: Bool,
@@ -276,19 +270,19 @@ actor SFTPClient: RemoteClient {
 
     // MARK: - File Existence Check
 
-    func fileExists(at remotePath: String) async -> Bool {
+    public func fileExists(at remotePath: String) async -> Bool {
         guard let sftp else { return false }
         return (try? await sftp.getAttributes(at: remotePath)) != nil
     }
 
-    func remoteModifiedDate(at remotePath: String) async -> Date? {
+    public func remoteModifiedDate(at remotePath: String) async -> Date? {
         guard let sftp else { return nil }
         return try? await sftp.getAttributes(at: remotePath).modifiedDate
     }
 
     // MARK: - Upload
 
-    func upload(
+    public func upload(
         from localURL: URL,
         remotePath: String,
         resume: Bool,
@@ -347,11 +341,11 @@ actor SFTPClient: RemoteClient {
 
     // MARK: - Keep-Alive
 
-    func keepAlive() async {
+    public func keepAlive() async {
         _ = try? await sftp?.getAttributes(at: connection.initialPath)
     }
 
-    func setModifiedDate(_ date: Date, at remotePath: String) async {
+    public func setModifiedDate(_ date: Date, at remotePath: String) async {
         guard let sftp else { return }
         var attrs = SFTPFileAttributes()
         attrs.accessModificationTime = .init(accessTime: date, modificationTime: date)
@@ -360,12 +354,12 @@ actor SFTPClient: RemoteClient {
 
     // MARK: - File Operations
 
-    func createDirectory(at absolutePath: String) async throws {
+    public func createDirectory(at absolutePath: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
         try await sftp.createDirectory(atPath: absolutePath)
     }
 
-    func delete(at absolutePath: String, isDirectory: Bool) async throws {
+    public func delete(at absolutePath: String, isDirectory: Bool) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
         if isDirectory {
             try await sftp.rmdir(at: absolutePath)
@@ -374,12 +368,12 @@ actor SFTPClient: RemoteClient {
         }
     }
 
-    func rename(from: String, to: String) async throws {
+    public func rename(from: String, to: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
         try await sftp.rename(at: from, to: to)
     }
 
-    func setPermissions(_ octal: Int, at absolutePath: String) async throws {
+    public func setPermissions(_ octal: Int, at absolutePath: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
         var attrs = SFTPFileAttributes()
         // Mask off file-type bits — only mode bits are settable per POSIX.
@@ -387,7 +381,7 @@ actor SFTPClient: RemoteClient {
         try await sftp.setAttributes(at: absolutePath, to: attrs)
     }
 
-    func setOwnership(owner: String, group: String, at absolutePath: String) async throws {
+    public func setOwnership(owner: String, group: String, at absolutePath: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
         guard let uid = UInt32(owner.trimmingCharacters(in: .whitespaces)),
               let gid = UInt32(group.trimmingCharacters(in: .whitespaces)) else {
