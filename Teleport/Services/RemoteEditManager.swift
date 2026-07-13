@@ -1,4 +1,5 @@
 import Foundation
+import TeleportKit
 
 /// Tracks remote files opened for local editing ("Edit…" in the remote pane):
 /// the downloaded copy is watched, and every save is auto-uploaded back to the

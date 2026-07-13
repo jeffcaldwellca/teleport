@@ -1,4 +1,5 @@
 import SwiftUI
+import TeleportKit
 
 struct PermissionsEditorSheet: View {
     let item: FileItem

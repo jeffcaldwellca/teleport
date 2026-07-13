@@ -7,12 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		015BF9CF70261BA13BD8B6B3 /* TeleportKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8DF44A768E6C7EF2D69B0C4E /* TeleportKit */; };
 		02E861DAAB731A7D4951251A /* RemoteFileRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = B790A3DA6A5093A87661D377 /* RemoteFileRef.swift */; };
 		09440E434B76FB9A5E4AFFB4 /* LocalFileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E96876EED7F3FDEB70CE6F8 /* LocalFileService.swift */; };
 		10835E45BC0770434546BFB5 /* HostKeyConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */; };
 		278BD8FAB7B0BCED7A6E2CC4 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 801B05886CD72901068956E5 /* AppState.swift */; };
-		27A950D2DEDA9D9C34C8614F /* FTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EBDFAF054FC6EAD958186C /* FTPClient.swift */; };
-		33FE93292A85D196E9856622 /* Connection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24144BC2FA27734B2598D7C9 /* Connection.swift */; };
 		3ED390AE22DCD16CC13BBF2C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8D05848D64FCD686BABC00 /* ContentView.swift */; };
 		4733F7D2AFD12E11DDBF6F48 /* BrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B4C6C54C5E2B2010633CE0 /* BrowserViewModel.swift */; };
 		4E8F6B483556E5D5406B6903 /* BrowserPaneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB32E3DF50C2FF41DB52C79 /* BrowserPaneView.swift */; };
@@ -25,22 +24,18 @@
 		78CE24C6D6DEDCC0B1FBE5A4 /* TransferTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEB2D57BE0A49B776D48D69 /* TransferTask.swift */; };
 		7DACB011B15E4F27D8568BC1 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DD1DDDDA4F5165D7641F5A3 /* Preferences.swift */; };
 		8B8949B88D01454D221D546B /* FileRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70CA4CDC200A3CC76A613853 /* FileRowView.swift */; };
-		90421948C0E6FC83AD84D64F /* RemotePath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D5B8F92C7A6F60AC2105B02 /* RemotePath.swift */; };
-		A9653031CD94C1FD28F1DF4C /* RemoteClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE72C85EAB5377A48A0CA5F5 /* RemoteClient.swift */; };
+		96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */; };
 		AB175E51C7A877DE631DFB97 /* TransferQueueViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */; };
-		AC2F38B5E778069D72656278 /* FileItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B491CD5D5A47EAC5ECAA8F5 /* FileItem.swift */; };
-		C00B38082C21216E696FF9E3 /* SSHHostKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFDFCDE14E0E014EC7645BAC /* SSHHostKeyStore.swift */; };
 		C4CFC4E0D839F6B4FA5B9EC1 /* TransferQueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD4A1EA2F79A462094CD5EA8 /* TransferQueueView.swift */; };
 		C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18E79DF52B793FCE0A588A95 /* MainToolbarContent.swift */; };
 		D022FB42EEC3445211183DFE /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B0D1DC65FBBB55D9B54BA1 /* SidebarView.swift */; };
 		D30B93CF87BD5440EA11535C /* FileItemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF086A1C6447D89589EFB4A /* FileItemTests.swift */; };
 		D7419D108712F17D64859021 /* TransferIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75497495FECF0CA0E9CE8AA2 /* TransferIntegrationTests.swift */; };
-		DA5DE72C94AAF23423A9BFD8 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = E06674E33BC074FA6C5E9497 /* Citadel */; };
+		DA5DE72C94AAF23423A9BFD8 /* TeleportKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7D1F44164055EF78491D6E26 /* TeleportKit */; };
 		DB208E379D30A191C51F1ADF /* SSHKeyFingerprintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1263184A33142977C401CA1 /* SSHKeyFingerprintTests.swift */; };
 		E84ADC8D9BE75AF53D69890C /* RemoteEditManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */; };
 		F6C5CA6A641228A8161E79D9 /* ConnectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA0542321805336558EF7D5D /* ConnectionStore.swift */; };
 		F728A6DBF7C24F0AAF723722 /* BreadcrumbView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D11485E61393554D4C7086 /* BreadcrumbView.swift */; };
-		FCD303D5EA2BBAB435797F10 /* SFTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9C8C252BEF7C97CF11EA26 /* SFTPClient.swift */; };
 		FE93EA1BB68EB91EAD5C1AFA /* TeleportApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B5C495F8B904DE060F56C9 /* TeleportApp.swift */; };
 		FF7A676BB7183BB16001B57A /* RemotePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29BED02A2BEF9C1D88E357CF /* RemotePathTests.swift */; };
 /* End PBXBuildFile section */
@@ -56,10 +51,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		007E373DF98623270ED11DF7 /* TeleportKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TeleportKit; path = TeleportKit; sourceTree = SOURCE_ROOT; };
 		18E79DF52B793FCE0A588A95 /* MainToolbarContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainToolbarContent.swift; sourceTree = "<group>"; };
 		1E96876EED7F3FDEB70CE6F8 /* LocalFileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileService.swift; sourceTree = "<group>"; };
 		22AC3AAFB688523CC34DCA6E /* PermissionsEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsEditorSheet.swift; sourceTree = "<group>"; };
-		24144BC2FA27734B2598D7C9 /* Connection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Connection.swift; sourceTree = "<group>"; };
 		25B0D1DC65FBBB55D9B54BA1 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		29BED02A2BEF9C1D88E357CF /* RemotePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePathTests.swift; sourceTree = "<group>"; };
 		2DD1DDDDA4F5165D7641F5A3 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
@@ -67,13 +62,12 @@
 		3A8D05848D64FCD686BABC00 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3EEB2D57BE0A49B776D48D69 /* TransferTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferTask.swift; sourceTree = "<group>"; };
 		4C55D35B6F34845417E65A45 /* HostKeyConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyConfirmationSheet.swift; sourceTree = "<group>"; };
-		5D5B8F92C7A6F60AC2105B02 /* RemotePath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePath.swift; sourceTree = "<group>"; };
+		4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteClientFactory.swift; sourceTree = "<group>"; };
 		63EE900E42C5EE5922F84386 /* TeleportTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeleportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		68E09A53E47A7183B9706F42 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueueViewModel.swift; sourceTree = "<group>"; };
 		70CA4CDC200A3CC76A613853 /* FileRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileRowView.swift; sourceTree = "<group>"; };
 		75497495FECF0CA0E9CE8AA2 /* TransferIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferIntegrationTests.swift; sourceTree = "<group>"; };
-		7B491CD5D5A47EAC5ECAA8F5 /* FileItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileItem.swift; sourceTree = "<group>"; };
 		801B05886CD72901068956E5 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		8789D60011F8B14C7DD9B4D4 /* Teleport.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Teleport.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyConfirmation.swift; sourceTree = "<group>"; };
@@ -83,16 +77,12 @@
 		B064B88C8149977A91AB511C /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		B790A3DA6A5093A87661D377 /* RemoteFileRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFileRef.swift; sourceTree = "<group>"; };
 		BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteEditManager.swift; sourceTree = "<group>"; };
-		BE72C85EAB5377A48A0CA5F5 /* RemoteClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteClient.swift; sourceTree = "<group>"; };
 		C1263184A33142977C401CA1 /* SSHKeyFingerprintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyFingerprintTests.swift; sourceTree = "<group>"; };
 		CA0542321805336558EF7D5D /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
-		CC9C8C252BEF7C97CF11EA26 /* SFTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SFTPClient.swift; sourceTree = "<group>"; };
-		E5EBDFAF054FC6EAD958186C /* FTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTPClient.swift; sourceTree = "<group>"; };
 		E6B4C6C54C5E2B2010633CE0 /* BrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserViewModel.swift; sourceTree = "<group>"; };
 		EDB32E3DF50C2FF41DB52C79 /* BrowserPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPaneView.swift; sourceTree = "<group>"; };
 		F6D11485E61393554D4C7086 /* BreadcrumbView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreadcrumbView.swift; sourceTree = "<group>"; };
 		FD4A1EA2F79A462094CD5EA8 /* TransferQueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueueView.swift; sourceTree = "<group>"; };
-		FFDFCDE14E0E014EC7645BAC /* SSHHostKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHHostKeyStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,7 +90,15 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DA5DE72C94AAF23423A9BFD8 /* Citadel in Frameworks */,
+				DA5DE72C94AAF23423A9BFD8 /* TeleportKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C83CEDD3AF736370BAB0D913 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				015BF9CF70261BA13BD8B6B3 /* TeleportKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +116,7 @@
 		0B2DD178EFA3A839455807C1 = {
 			isa = PBXGroup;
 			children = (
+				F764FF9BB2A7E34C26AECFCB /* Packages */,
 				C4D621C95C7515CA8C21121A /* Teleport */,
 				BCD524C221725BF20305EA81 /* TeleportTests */,
 				2C7FA2DC347242C3E85FAFA4 /* Products */,
@@ -131,15 +130,11 @@
 			children = (
 				9CA01CB3D387DD75FE765260 /* BookmarkStore.swift */,
 				CA0542321805336558EF7D5D /* ConnectionStore.swift */,
-				E5EBDFAF054FC6EAD958186C /* FTPClient.swift */,
 				923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */,
 				B064B88C8149977A91AB511C /* KeychainService.swift */,
 				1E96876EED7F3FDEB70CE6F8 /* LocalFileService.swift */,
-				BE72C85EAB5377A48A0CA5F5 /* RemoteClient.swift */,
+				4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */,
 				BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */,
-				5D5B8F92C7A6F60AC2105B02 /* RemotePath.swift */,
-				CC9C8C252BEF7C97CF11EA26 /* SFTPClient.swift */,
-				FFDFCDE14E0E014EC7645BAC /* SSHHostKeyStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -156,8 +151,6 @@
 		6413C5E304B88739A42364FB /* Models */ = {
 			isa = PBXGroup;
 			children = (
-				24144BC2FA27734B2598D7C9 /* Connection.swift */,
-				7B491CD5D5A47EAC5ECAA8F5 /* FileItem.swift */,
 				B790A3DA6A5093A87661D377 /* RemoteFileRef.swift */,
 				3EEB2D57BE0A49B776D48D69 /* TransferTask.swift */,
 			);
@@ -248,6 +241,14 @@
 			path = ViewModels;
 			sourceTree = "<group>";
 		};
+		F764FF9BB2A7E34C26AECFCB /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				007E373DF98623270ED11DF7 /* TeleportKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -256,6 +257,7 @@
 			buildConfigurationList = 9919FCE0F18FF0600E2CC2F3 /* Build configuration list for PBXNativeTarget "TeleportTests" */;
 			buildPhases = (
 				499C97A90431989D4C0504CB /* Sources */,
+				C83CEDD3AF736370BAB0D913 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -264,6 +266,7 @@
 			);
 			name = TeleportTests;
 			packageProductDependencies = (
+				8DF44A768E6C7EF2D69B0C4E /* TeleportKit */,
 			);
 			productName = TeleportTests;
 			productReference = 63EE900E42C5EE5922F84386 /* TeleportTests.xctest */;
@@ -283,7 +286,7 @@
 			);
 			name = Teleport;
 			packageProductDependencies = (
-				E06674E33BC074FA6C5E9497 /* Citadel */,
+				7D1F44164055EF78491D6E26 /* TeleportKit */,
 			);
 			productName = Teleport;
 			productReference = 8789D60011F8B14C7DD9B4D4 /* Teleport.app */;
@@ -313,7 +316,7 @@
 			mainGroup = 0B2DD178EFA3A839455807C1;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				FAE1C70A26F179362B04A32A /* XCRemoteSwiftPackageReference "Citadel" */,
+				DF2A7EE86731B827439964D7 /* XCLocalSwiftPackageReference "TeleportKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2C7FA2DC347242C3E85FAFA4 /* Products */;
@@ -358,12 +361,9 @@
 				F728A6DBF7C24F0AAF723722 /* BreadcrumbView.swift in Sources */,
 				4E8F6B483556E5D5406B6903 /* BrowserPaneView.swift in Sources */,
 				4733F7D2AFD12E11DDBF6F48 /* BrowserViewModel.swift in Sources */,
-				33FE93292A85D196E9856622 /* Connection.swift in Sources */,
 				5916F2793A703B0F061A1E06 /* ConnectionEditorView.swift in Sources */,
 				F6C5CA6A641228A8161E79D9 /* ConnectionStore.swift in Sources */,
 				3ED390AE22DCD16CC13BBF2C /* ContentView.swift in Sources */,
-				27A950D2DEDA9D9C34C8614F /* FTPClient.swift in Sources */,
-				AC2F38B5E778069D72656278 /* FileItem.swift in Sources */,
 				8B8949B88D01454D221D546B /* FileRowView.swift in Sources */,
 				10835E45BC0770434546BFB5 /* HostKeyConfirmation.swift in Sources */,
 				7568226441380BDF6763E45B /* HostKeyConfirmationSheet.swift in Sources */,
@@ -372,12 +372,9 @@
 				C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */,
 				74D8B9CEF55EA10158B2458C /* PermissionsEditorSheet.swift in Sources */,
 				7DACB011B15E4F27D8568BC1 /* Preferences.swift in Sources */,
-				A9653031CD94C1FD28F1DF4C /* RemoteClient.swift in Sources */,
+				96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */,
 				E84ADC8D9BE75AF53D69890C /* RemoteEditManager.swift in Sources */,
 				02E861DAAB731A7D4951251A /* RemoteFileRef.swift in Sources */,
-				90421948C0E6FC83AD84D64F /* RemotePath.swift in Sources */,
-				FCD303D5EA2BBAB435797F10 /* SFTPClient.swift in Sources */,
-				C00B38082C21216E696FF9E3 /* SSHHostKeyStore.swift in Sources */,
 				D022FB42EEC3445211183DFE /* SidebarView.swift in Sources */,
 				FE93EA1BB68EB91EAD5C1AFA /* TeleportApp.swift in Sources */,
 				C4CFC4E0D839F6B4FA5B9EC1 /* TransferQueueView.swift in Sources */,
@@ -626,22 +623,21 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		FAE1C70A26F179362B04A32A /* XCRemoteSwiftPackageReference "Citadel" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/orlandos-nl/Citadel";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.8.0;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		DF2A7EE86731B827439964D7 /* XCLocalSwiftPackageReference "TeleportKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = TeleportKit;
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		E06674E33BC074FA6C5E9497 /* Citadel */ = {
+		7D1F44164055EF78491D6E26 /* TeleportKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = FAE1C70A26F179362B04A32A /* XCRemoteSwiftPackageReference "Citadel" */;
-			productName = Citadel;
+			productName = TeleportKit;
+		};
+		8DF44A768E6C7EF2D69B0C4E /* TeleportKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TeleportKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

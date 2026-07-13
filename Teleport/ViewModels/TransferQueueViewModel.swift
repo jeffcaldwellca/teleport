@@ -1,4 +1,5 @@
 import Foundation
+import TeleportKit
 import SwiftUI
 
 // MARK: - Conflict Info
@@ -604,7 +605,8 @@ final class TransferQueueViewModel {
     private func isFatal(_ error: Error) -> Bool {
         if let e = error as? RemoteClientError {
             switch e {
-            case .authenticationFailed, .permissionDenied: return true
+            case .authenticationFailed, .permissionDenied, .hostKeyUntrusted, .hostKeyMismatch:
+                return true
             default: return false
             }
         }

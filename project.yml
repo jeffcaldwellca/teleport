@@ -10,9 +10,8 @@ options:
   createIntermediateGroups: true
 
 packages:
-  Citadel:
-    url: https://github.com/orlandos-nl/Citadel
-    from: "0.8.0"
+  TeleportKit:
+    path: TeleportKit
 
 targets:
   Teleport:
@@ -36,8 +35,8 @@ targets:
         DEVELOPMENT_TEAM: ""
         INFOPLIST_FILE: Teleport/Info.plist
     dependencies:
-      - package: Citadel
-        product: Citadel
+      - package: TeleportKit
+        product: TeleportKit
 
   TeleportTests:
     type: bundle.unit-test
@@ -53,6 +52,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Teleport
+      - package: TeleportKit
+        product: TeleportKit
 
 schemes:
   Teleport:
