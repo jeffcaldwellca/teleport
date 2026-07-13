@@ -128,4 +128,34 @@ final class CLIIntegrationTests: XCTestCase {
         let rm = try run(["rm", "ftp://testuser:testpass@127.0.0.1:2121\(folder)", "--recursive"])
         XCTAssertEqual(rm.exitCode, 0, rm.stderr)
     }
+
+    func test_stat_correctlyIdentifiesDirectory() throws {
+        try requireServers()
+        let folder = "/ftp/testuser/tport-it-statdir-\(UUID().uuidString.prefix(8))"
+        let mkdir = try run(["mkdir", "ftp://testuser:testpass@127.0.0.1:2121\(folder)"])
+        XCTAssertEqual(mkdir.exitCode, 0, mkdir.stderr)
+        addTeardownBlock { _ = try? self.run(["rm", "ftp://testuser:testpass@127.0.0.1:2121\(folder)", "--recursive"]) }
+
+        // Before the fix, stat used SIZE-based fileExists (undefined for
+        // directories on most FTP servers) and hardcoded isDirectory: false.
+        let stat = try run(["stat", "ftp://testuser:testpass@127.0.0.1:2121\(folder)", "--json"])
+        XCTAssertEqual(stat.exitCode, 0, stat.stderr)
+        XCTAssertTrue(stat.stdout.contains("\"isDirectory\":true"), stat.stdout)
+    }
+
+    func test_mkdir_parents_isIdempotent() throws {
+        try requireServers()
+        let folder = "/ftp/testuser/tport-it-idem-\(UUID().uuidString.prefix(8))/nested"
+        addTeardownBlock {
+            _ = try? self.run(["rm", "ftp://testuser:testpass@127.0.0.1:2121\(folder)", "--recursive"])
+        }
+
+        let first = try run(["mkdir", "--parents", "ftp://testuser:testpass@127.0.0.1:2121\(folder)"])
+        XCTAssertEqual(first.exitCode, 0, first.stderr)
+        // Running it again against the same, now-existing path must still
+        // succeed (mkdir -p semantics), not surface the "already exists"
+        // server error as a failure.
+        let second = try run(["mkdir", "--parents", "ftp://testuser:testpass@127.0.0.1:2121\(folder)"])
+        XCTAssertEqual(second.exitCode, 0, second.stderr)
+    }
 }
