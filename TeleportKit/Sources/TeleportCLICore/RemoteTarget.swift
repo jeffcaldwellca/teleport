@@ -40,9 +40,11 @@ public struct RemoteTarget {
     }
 }
 
-public enum TportUsageError: Error, CustomStringConvertible {
+public enum TportUsageError: LocalizedError, CustomStringConvertible {
     case invalidURL(String)
     case missingCredentials(String)
+
+    public var errorDescription: String? { description }
 
     public var description: String {
         switch self {
