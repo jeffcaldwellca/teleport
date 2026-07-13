@@ -10,7 +10,7 @@ import Security
 
 // MARK: - Errors
 
-enum FTPError: LocalizedError {
+public enum FTPError: LocalizedError {
     case connectionFailed(String)
     case unexpectedResponse(Int, String)
     case authFailed
@@ -21,7 +21,7 @@ enum FTPError: LocalizedError {
     case listingFailed(String)
     case serverError(Int, String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .connectionFailed(let m):          return "Connection failed: \(m)"
         case .unexpectedResponse(let c, let m): return "FTP \(c): \(m)"
@@ -338,7 +338,7 @@ private final class FTPSocket {
 
 // MARK: - FTPClient
 
-actor FTPClient: RemoteClient {
+public actor FTPClient: RemoteClient {
 
     private let connection: Connection
     private let password: String
@@ -350,11 +350,11 @@ actor FTPClient: RemoteClient {
     // or concurrent transfer can't tie up a shared pool thread and stall every
     // other async task in the app.
     private let ioQueue = DispatchSerialQueue(label: "com.teleport.ftp.io")
-    nonisolated var unownedExecutor: UnownedSerialExecutor {
+    public nonisolated var unownedExecutor: UnownedSerialExecutor {
         ioQueue.asUnownedSerialExecutor()
     }
 
-    init(connection: Connection, password: String) {
+    public init(connection: Connection, password: String) {
         self.connection = connection
         self.password   = password
     }
@@ -364,7 +364,7 @@ actor FTPClient: RemoteClient {
 
     // MARK: - Connect
 
-    func connect() async throws {
+    public func connect() async throws {
         try connectSync()
     }
 
@@ -442,7 +442,7 @@ actor FTPClient: RemoteClient {
 
     // MARK: - Disconnect
 
-    func disconnect() async {
+    public func disconnect() async {
         // Send QUIT as a courtesy but don't wait for the reply: on a dead or
         // half-dead connection, reading the response blocks for the full idle
         // timeout (60s), which stalls retry loops and disconnect paths.
@@ -456,7 +456,7 @@ actor FTPClient: RemoteClient {
 
     // MARK: - List Directory
 
-    func listDirectory(at absolutePath: String) async throws -> [FileItem] {
+    public func listDirectory(at absolutePath: String) async throws -> [FileItem] {
         try listSync(path: absolutePath)
     }
 
@@ -490,7 +490,7 @@ actor FTPClient: RemoteClient {
 
     // MARK: - Download
 
-    func download(
+    public func download(
         remotePath: String,
         to localURL: URL,
         resume: Bool,
@@ -591,7 +591,7 @@ actor FTPClient: RemoteClient {
 
     // MARK: - Upload
 
-    func upload(
+    public func upload(
         from localURL: URL,
         remotePath: String,
         resume: Bool,
@@ -684,18 +684,18 @@ actor FTPClient: RemoteClient {
 
     // MARK: - Keep-Alive
 
-    func keepAlive() async {
+    public func keepAlive() async {
         _ = try? sendCommand("NOOP")
     }
 
     // MARK: - File Existence Check
 
-    func fileExists(at remotePath: String) async -> Bool {
+    public func fileExists(at remotePath: String) async -> Bool {
         let resp = try? sendCommand("SIZE \(remotePath)")
         return resp?.code == 213
     }
 
-    func remoteModifiedDate(at remotePath: String) async -> Date? {
+    public func remoteModifiedDate(at remotePath: String) async -> Date? {
         guard let resp = try? sendCommand("MDTM \(remotePath)"),
               resp.code == 213 else { return nil }
         // MDTM response format: "YYYYMMDDHHmmss" or "YYYYMMDDHHmmss.sss"
@@ -707,7 +707,7 @@ actor FTPClient: RemoteClient {
         return fmt.date(from: dateStr)
     }
 
-    func setModifiedDate(_ date: Date, at remotePath: String) async {
+    public func setModifiedDate(_ date: Date, at remotePath: String) async {
         // RFC 3659 MFMT. Best-effort: servers without it just refuse.
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMddHHmmss"
@@ -715,11 +715,11 @@ actor FTPClient: RemoteClient {
         _ = try? sendCommand("MFMT \(fmt.string(from: date)) \(remotePath)")
     }
 
-    func createDirectory(at absolutePath: String) async throws {
+    public func createDirectory(at absolutePath: String) async throws {
         try await assertCode(sendSync("MKD \(absolutePath)"), expected: 257)
     }
 
-    func delete(at absolutePath: String, isDirectory: Bool) async throws {
+    public func delete(at absolutePath: String, isDirectory: Bool) async throws {
         if isDirectory {
             try await assertCode(sendSync("RMD \(absolutePath)"), expected: 250)
         } else {
@@ -727,17 +727,17 @@ actor FTPClient: RemoteClient {
         }
     }
 
-    func rename(from: String, to: String) async throws {
+    public func rename(from: String, to: String) async throws {
         try await assertCode(sendSync("RNFR \(from)"), expected: 350)
         try await assertCode(sendSync("RNTO \(to)"), expected: 250)
     }
 
-    func setPermissions(_ octal: Int, at absolutePath: String) async throws {
+    public func setPermissions(_ octal: Int, at absolutePath: String) async throws {
         let resp = try await sendSync("SITE CHMOD \(octal) \(absolutePath)")
         guard resp.code == 200 else { throw RemoteClientError.unsupported("SITE CHMOD") }
     }
 
-    func setOwnership(owner: String, group: String, at absolutePath: String) async throws {
+    public func setOwnership(owner: String, group: String, at absolutePath: String) async throws {
         let arg = owner.isEmpty ? group : (group.isEmpty ? "\(owner):" : "\(owner):\(group)")
         let resp = try await sendSync("SITE CHOWN \(arg) \(absolutePath)")
         guard resp.code == 200 || resp.code == 250 else {
@@ -866,11 +866,11 @@ actor FTPClient: RemoteClient {
 
 /// Pure parsers for FTP directory listings, separated from the `FTPClient`
 /// actor so they're unit-testable and can't touch connection state.
-enum FTPListingParser {
+public enum FTPListingParser {
 
     // MARK: MLSD (machine-readable)
 
-    static func mlsdLine(_ line: String, basePath: String) -> FileItem? {
+    public static func mlsdLine(_ line: String, basePath: String) -> FileItem? {
         // Format: "fact=value;fact=value; name"
         guard let spaceIdx = line.firstIndex(of: " ") else { return nil }
         let facts = String(line[line.startIndex ..< spaceIdx])
@@ -903,7 +903,7 @@ enum FTPListingParser {
                         size: size, modifiedDate: modified, permissions: perms)
     }
 
-    static func mlsdDate(_ s: String) -> Date? {
+    public static func mlsdDate(_ s: String) -> Date? {
         let clean = String(s.prefix(14))
         guard clean.count == 14 else { return nil }
         var c = DateComponents()
@@ -920,7 +920,7 @@ enum FTPListingParser {
 
     // MARK: LIST (UNIX ls -la)
 
-    static func listLine(_ line: String, basePath: String) -> FileItem? {
+    public static func listLine(_ line: String, basePath: String) -> FileItem? {
         // "drwxr-xr-x  2 user group  4096 Jan 15 10:30 name"
         let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
         guard parts.count >= 9 else { return nil }
@@ -958,7 +958,7 @@ enum FTPListingParser {
 
     /// `ls -l` carries no timezone, so we interpret it as UTC for consistency
     /// with MLSD/MDTM (which are UTC) instead of the client's local zone.
-    static func listDate(_ month: String, _ day: String, _ yearOrTime: String) -> Date? {
+    public static func listDate(_ month: String, _ day: String, _ yearOrTime: String) -> Date? {
         let months = ["Jan","Feb","Mar","Apr","May","Jun",
                       "Jul","Aug","Sep","Oct","Nov","Dec"]
         guard let mIdx = months.firstIndex(of: month) else { return nil }
