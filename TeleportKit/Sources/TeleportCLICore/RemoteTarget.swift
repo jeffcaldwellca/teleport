@@ -4,6 +4,10 @@ import TeleportKit
 public struct RemoteTarget {
     public let connectionProtocol: Connection.ConnectionProtocol
     public let username: String
+    /// Password embedded in the URL (`user:password@host`), if any. Lowest
+    /// priority in `AuthOptions.resolvePassword` — an explicit `--password`,
+    /// `--password-stdin`, or `TELEPORT_PASSWORD` always wins.
+    public let password: String?
     public let host: String
     public let port: Int
     public let path: String
@@ -26,7 +30,10 @@ public struct RemoteTarget {
         let username = components.user ?? NSUserName()
         let port = components.port ?? proto.defaultPort
         let path = components.path.isEmpty ? "/" : components.path
-        return RemoteTarget(connectionProtocol: proto, username: username, host: host, port: port, path: path)
+        return RemoteTarget(
+            connectionProtocol: proto, username: username, password: components.password,
+            host: host, port: port, path: path
+        )
     }
 
     public func makeConnection() -> Connection {

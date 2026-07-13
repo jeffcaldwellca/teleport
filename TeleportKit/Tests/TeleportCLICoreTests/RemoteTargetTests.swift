@@ -39,4 +39,15 @@ final class RemoteTargetTests: XCTestCase {
         XCTAssertEqual(t.port, 21)
         XCTAssertEqual(t.connectionProtocol, .ftps)
     }
+
+    func test_parse_readsEmbeddedUserAndPassword() throws {
+        let t = try RemoteTarget.parse("ftp://testuser:testpass@127.0.0.1:2121/path")
+        XCTAssertEqual(t.username, "testuser")
+        XCTAssertEqual(t.password, "testpass")
+    }
+
+    func test_parse_noEmbeddedPassword_isNil() throws {
+        let t = try RemoteTarget.parse("sftp://alice@example.com/path")
+        XCTAssertNil(t.password)
+    }
 }
