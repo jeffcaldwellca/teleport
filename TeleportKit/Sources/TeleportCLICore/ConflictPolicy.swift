@@ -30,13 +30,17 @@ public func decideConflict(
     case .skip:
         return .skip
     case .ifNewer:
-        switch direction {
-        case .get:
-            if let r = remoteDate, let l = localDate, r > l { return .proceed }
-            return .skip
-        case .put:
-            if let l = localDate, let r = remoteDate, l > r { return .proceed }
-            return .skip
-        }
+        let (source, dest): (Date?, Date?) = direction == .get ? (remoteDate, localDate) : (localDate, remoteDate)
+        // Floor to whole seconds before comparing: FTP's MDTM only reports
+        // second-granularity mtimes while local files carry sub-second
+        // precision, so a bare `>` would treat an unchanged file as "newer"
+        // on every run (10:30:45.732 local vs. 10:30:45.000 remote) and
+        // needlessly re-transfer it every time.
+        guard let source, let dest, floorToSecond(source) > floorToSecond(dest) else { return .skip }
+        return .proceed
     }
+}
+
+private func floorToSecond(_ date: Date) -> Date {
+    Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
 }
