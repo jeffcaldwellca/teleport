@@ -1,4 +1,5 @@
 import Foundation
+import TeleportKit
 
 /// Wraps local filesystem operations to give them the same async interface used elsewhere.
 final class LocalFileService {

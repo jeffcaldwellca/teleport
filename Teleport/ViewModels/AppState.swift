@@ -1,4 +1,5 @@
 import Foundation
+import TeleportKit
 import SwiftUI
 
 /// Root application state — single source of truth passed through the environment.

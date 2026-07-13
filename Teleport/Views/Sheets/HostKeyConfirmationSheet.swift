@@ -1,4 +1,5 @@
 import SwiftUI
+import TeleportKit
 
 struct HostKeyConfirmationSheet: View {
     let request: HostKeyConfirmationRequest

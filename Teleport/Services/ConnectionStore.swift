@@ -1,4 +1,5 @@
 import Foundation
+import TeleportKit
 
 @Observable
 final class ConnectionStore {

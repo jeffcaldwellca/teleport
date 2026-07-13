@@ -1,4 +1,5 @@
 import SwiftUI
+import TeleportKit
 
 @main
 struct TeleportApp: App {

@@ -1,4 +1,5 @@
 import SwiftUI
+import TeleportKit
 
 /// The Name-column cell of the file Table: icon + filename (or an inline rename
 /// field). Selection, activation, and drag are all handled by the Table /
