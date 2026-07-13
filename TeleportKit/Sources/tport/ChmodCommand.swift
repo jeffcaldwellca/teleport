@@ -16,7 +16,7 @@ struct ChmodCommand: AsyncParsableCommand {
 
     func run() async throws {
         try await runTport {
-            guard let value = Int(octal, radix: 8) else {
+            guard let value = Int(octal, radix: 8), value >= 0 else {
                 throw TportUsageError.invalidURL("'\(octal)' isn't a valid octal permission (e.g. 644)")
             }
             let target = try RemoteTarget.parse(url)
