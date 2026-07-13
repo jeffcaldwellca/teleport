@@ -60,6 +60,28 @@ final class SSHHostKeyStoreTests: XCTestCase {
         XCTAssertNil(freshFp)
     }
 
+    func test_concurrentInstances_bothWritesSurvive() async throws {
+        // Two stores (e.g. two `tport` processes) pointed at the same file,
+        // each recording a different host without seeing the other's write.
+        // record()'s re-read-before-write must preserve both, not just
+        // whichever store happens to persist last.
+        let url = FileManager.default.temporaryDirectory
+            .appending(component: "known-hosts-test-\(UUID().uuidString).json")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+
+        let storeA = SSHHostKeyStore(storeURL: url)
+        let storeB = SSHHostKeyStore(storeURL: url)
+
+        try await storeA.record(host: "a.example.com", port: 22, fingerprint: "SHA256:a")
+        try await storeB.record(host: "b.example.com", port: 22, fingerprint: "SHA256:b")
+
+        let verify = SSHHostKeyStore(storeURL: url)
+        let a = await verify.fingerprint(for: "a.example.com", port: 22)
+        let b = await verify.fingerprint(for: "b.example.com", port: 22)
+        XCTAssertEqual(a, "SHA256:a")
+        XCTAssertEqual(b, "SHA256:b")
+    }
+
     func test_trustedHosts_sortedByHostThenPort() async throws {
         let (store, _) = makeStore()
         try await store.record(host: "b.example.com", port: 22, fingerprint: "SHA256:b")
