@@ -32,21 +32,28 @@ struct PutCommand: AsyncParsableCommand {
             let target = try RemoteTarget.parse(url)
             let localURL = URL(fileURLWithPath: local)
             let client = try auth.makeClient(for: target)
-            try await client.connect()
-            defer { Task { await client.disconnect() } }
-
-            if recursive {
-                try await putFolder(client: client, localURL: localURL, remoteParent: target.path)
-            } else {
-                try await putFile(client: client, localURL: localURL, remotePath: target.path)
+            try await withConnectedClient(client) { client in
+                if recursive {
+                    try await putFolder(client: client, localURL: localURL, remoteParent: target.path)
+                } else {
+                    try await putFile(client: client, localURL: localURL, remotePath: target.path)
+                }
             }
         }
     }
 
     private func putFile(client: RemoteClient, localURL: URL, remotePath: String) async throws {
         let exists = await client.fileExists(at: remotePath)
-        let localDate = (try? localURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-        let remoteDate = await client.remoteModifiedDate(at: remotePath)
+        // remoteModifiedDate is a network round trip decideConflict only
+        // consults for .ifNewer -- skip it for .overwrite/.skip, and skip it
+        // entirely when the destination doesn't exist (decideConflict always
+        // proceeds in that case regardless of policy).
+        var localDate: Date? = nil
+        var remoteDate: Date? = nil
+        if exists && onConflict == .ifNewer {
+            localDate = (try? localURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            remoteDate = await client.remoteModifiedDate(at: remotePath)
+        }
         let decision = decideConflict(policy: onConflict, exists: exists, localDate: localDate, remoteDate: remoteDate, direction: .put)
         guard decision == .proceed else {
             if !global.quiet { FileHandle.standardError.write(Data("skipped (exists): \(remotePath)\n".utf8)) }

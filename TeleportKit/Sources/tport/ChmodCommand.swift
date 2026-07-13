@@ -21,9 +21,9 @@ struct ChmodCommand: AsyncParsableCommand {
             }
             let target = try RemoteTarget.parse(url)
             let client = try auth.makeClient(for: target)
-            try await client.connect()
-            defer { Task { await client.disconnect() } }
-            try await client.setPermissions(value, at: target.path)
+            try await withConnectedClient(client) { client in
+                try await client.setPermissions(value, at: target.path)
+            }
         }
     }
 }
