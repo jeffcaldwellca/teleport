@@ -23,12 +23,25 @@ struct MkdirCommand: AsyncParsableCommand {
                     var accumulated = ""
                     for component in target.path.split(separator: "/") {
                         accumulated += "/\(component)"
-                        try? await client.createDirectory(at: accumulated)
+                        try await createDirectoryTolerantly(client, at: accumulated)
                     }
                 } else {
                     try await client.createDirectory(at: target.path)
                 }
             }
+        }
+    }
+
+    /// Creates `path`, tolerating "already exists" (mkdir -p is idempotent)
+    /// but surfacing any other failure (permission denied, read-only fs,
+    /// quota) instead of silently swallowing it. There's no typed
+    /// "already exists" error to match on here, so a failed create is
+    /// checked against fileExists to tell the two apart.
+    private func createDirectoryTolerantly(_ client: RemoteClient, at path: String) async throws {
+        do {
+            try await client.createDirectory(at: path)
+        } catch {
+            guard await client.fileExists(at: path) else { throw error }
         }
     }
 }
