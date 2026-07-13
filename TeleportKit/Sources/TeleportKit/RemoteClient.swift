@@ -1,6 +1,6 @@
 import Foundation
 
-protocol RemoteClient: AnyObject, Sendable {
+public protocol RemoteClient: AnyObject, Sendable {
     /// Attempt to connect and authenticate.
     func connect() async throws
 
@@ -62,16 +62,18 @@ protocol RemoteClient: AnyObject, Sendable {
     func fileExists(at remotePath: String) async -> Bool
 }
 
-enum RemoteClientError: LocalizedError {
+public enum RemoteClientError: LocalizedError {
     case notConnected
     case authenticationFailed
     case permissionDenied
     case fileNotFound(String)
     case transferFailed(String)
     case unsupported(String)
+    case hostKeyUntrusted(host: String, port: Int, fingerprint: String)
+    case hostKeyMismatch(host: String, port: Int, expected: String, actual: String)
     case unknown(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .notConnected:           return "Not connected"
         case .authenticationFailed:   return "Authentication failed"
@@ -79,19 +81,12 @@ enum RemoteClientError: LocalizedError {
         case .fileNotFound(let p):    return "File not found: \(p)"
         case .transferFailed(let m):  return "Transfer failed: \(m)"
         case .unsupported(let op):    return "\(op) is not supported by this server"
+        case .hostKeyUntrusted(let host, let port, let fp):
+            return "Host key for \(host):\(port) was not trusted (fingerprint \(fp))"
+        case .hostKeyMismatch(let host, let port, let expected, let actual):
+            return "Host key for \(host):\(port) has changed — possible MITM attack. " +
+                   "Expected \(expected), saw \(actual)."
         case .unknown(let m):         return m
-        }
-    }
-}
-
-/// Factory that creates the correct RemoteClient for a given connection.
-enum RemoteClientFactory {
-    static func make(for connection: Connection, password: String) -> RemoteClient {
-        switch connection.connectionProtocol {
-        case .sftp:
-            return SFTPClient(connection: connection, password: password)
-        case .ftp, .ftps:
-            return FTPClient(connection: connection, password: password)
         }
     }
 }
