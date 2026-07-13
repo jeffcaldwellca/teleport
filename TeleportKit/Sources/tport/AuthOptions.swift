@@ -19,7 +19,10 @@ struct AuthOptions: ParsableArguments {
     @Flag(name: .long, help: "Trust and save an unknown SSH host key instead of failing closed.")
     var acceptNewHostkey = false
 
-    func resolvePassword() throws -> String {
+    /// Precedence: --password-stdin > --password > TELEPORT_PASSWORD >
+    /// password embedded in the URL (user:password@host) > empty (anonymous
+    /// FTP, or SFTP key auth, which ignores the password when a key is set).
+    func resolvePassword(for target: RemoteTarget) throws -> String {
         if passwordStdin {
             guard let line = readLine(strippingNewline: true) else {
                 throw TportUsageError.missingCredentials("--password-stdin was set but stdin produced no line")
@@ -28,7 +31,8 @@ struct AuthOptions: ParsableArguments {
         }
         if let password { return password }
         if let env = ProcessInfo.processInfo.environment["TELEPORT_PASSWORD"] { return env }
-        return ""   // anonymous FTP, or SFTP key auth (buildAuthMethod ignores the password when a key is set)
+        if let urlPassword = target.password { return urlPassword }
+        return ""
     }
 
     private static var defaultKnownHostsURL: URL {
@@ -43,7 +47,7 @@ struct AuthOptions: ParsableArguments {
     func makeClient(for target: RemoteTarget) throws -> RemoteClient {
         var connection = target.makeConnection()
         if let identity { connection.sshKeyPath = identity }
-        let password = try resolvePassword()
+        let password = try resolvePassword(for: target)
 
         switch target.connectionProtocol {
         case .sftp:
