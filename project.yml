@@ -1,0 +1,65 @@
+name: Teleport
+
+options:
+  bundleIdPrefix: com.teleport
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  indentWidth: 4
+  tabWidth: 4
+  createIntermediateGroups: true
+
+packages:
+  Citadel:
+    url: https://github.com/orlandos-nl/Citadel
+    from: "0.8.0"
+
+targets:
+  Teleport:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Teleport
+        excludes:
+          - "**/*.plist"
+          - "**/*.entitlements"
+    resources:
+      - path: Teleport/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.teleport.app
+        SWIFT_VERSION: 5.9
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_ENTITLEMENTS: Teleport/Teleport.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        DEVELOPMENT_TEAM: ""
+        INFOPLIST_FILE: Teleport/Info.plist
+    dependencies:
+      - package: Citadel
+        product: Citadel
+
+  TeleportTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: TeleportTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.teleport.app.tests
+        SWIFT_VERSION: 5.9
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Teleport
+
+schemes:
+  Teleport:
+    build:
+      targets:
+        Teleport: all
+        TeleportTests: [test]
+    test:
+      targets:
+        - TeleportTests
