@@ -1,35 +1,35 @@
 import Foundation
 import UniformTypeIdentifiers
 
-struct FileItem: Identifiable, Hashable {
-    var name: String
-    var path: String
-    var isDirectory: Bool
-    var isSymlink: Bool = false
-    var symlinkTarget: String? = nil
-    var size: Int64?
-    var modifiedDate: Date?
-    var permissions: String?
-    var owner: String?
-    var group: String?
+public struct FileItem: Identifiable, Hashable {
+    public var name: String
+    public var path: String
+    public var isDirectory: Bool
+    public var isSymlink: Bool = false
+    public var symlinkTarget: String? = nil
+    public var size: Int64?
+    public var modifiedDate: Date?
+    public var permissions: String?
+    public var owner: String?
+    public var group: String?
 
     /// Path-derived identity — selection survives across directory refreshes,
     /// which a freshly-generated `UUID()` would not.
-    var id: String { path }
+    public var id: String { path }
 
-    var isHidden: Bool { name.hasPrefix(".") }
+    public var isHidden: Bool { name.hasPrefix(".") }
 
-    var displaySize: String {
+    public var displaySize: String {
         guard !isDirectory, let size = size else { return isDirectory ? "—" : "" }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    var contentType: UTType {
+    public var contentType: UTType {
         if isDirectory { return .folder }
         return UTType(filenameExtension: (name as NSString).pathExtension) ?? .data
     }
 
-    var systemImage: String {
+    public var systemImage: String {
         if isSymlink { return "arrow.triangle.turn.up.right.circle" }
         if isDirectory { return "folder.fill" }
         switch contentType {
@@ -48,7 +48,7 @@ struct FileItem: Identifiable, Hashable {
         }
     }
 
-    var imageColor: String {
+    public var imageColor: String {
         if isDirectory { return "blue" }
         switch contentType {
         case .image:  return "purple"
@@ -59,7 +59,31 @@ struct FileItem: Identifiable, Hashable {
         }
     }
 
-    static func placeholder(name: String, isDirectory: Bool) -> FileItem {
+    public init(
+        name: String,
+        path: String,
+        isDirectory: Bool,
+        isSymlink: Bool = false,
+        symlinkTarget: String? = nil,
+        size: Int64? = nil,
+        modifiedDate: Date? = nil,
+        permissions: String? = nil,
+        owner: String? = nil,
+        group: String? = nil
+    ) {
+        self.name = name
+        self.path = path
+        self.isDirectory = isDirectory
+        self.isSymlink = isSymlink
+        self.symlinkTarget = symlinkTarget
+        self.size = size
+        self.modifiedDate = modifiedDate
+        self.permissions = permissions
+        self.owner = owner
+        self.group = group
+    }
+
+    public static func placeholder(name: String, isDirectory: Bool) -> FileItem {
         FileItem(name: name, path: "/\(name)", isDirectory: isDirectory)
     }
 }

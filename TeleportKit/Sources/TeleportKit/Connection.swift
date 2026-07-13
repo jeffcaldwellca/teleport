@@ -1,25 +1,25 @@
 import Foundation
 
-struct Connection: Identifiable, Codable, Hashable {
-    var id: UUID = UUID()
-    var name: String
-    var host: String
-    var port: Int
-    var username: String
-    var connectionProtocol: ConnectionProtocol
-    var initialPath: String = "/"
-    var sshKeyPath: String = ""
-    var notes: String = ""
-    var createdAt: Date = Date()
+public struct Connection: Identifiable, Codable, Hashable {
+    public var id: UUID = UUID()
+    public var name: String
+    public var host: String
+    public var port: Int
+    public var username: String
+    public var connectionProtocol: ConnectionProtocol
+    public var initialPath: String = "/"
+    public var sshKeyPath: String = ""
+    public var notes: String = ""
+    public var createdAt: Date = Date()
 
-    enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable {
+    public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable {
         case ftp  = "FTP"
         case ftps = "FTPS"
         case sftp = "SFTP"
 
-        var id: String { rawValue }
+        public var id: String { rawValue }
 
-        var defaultPort: Int {
+        public var defaultPort: Int {
             switch self {
             case .ftp:  return 21
             case .ftps: return 21
@@ -27,7 +27,7 @@ struct Connection: Identifiable, Codable, Hashable {
             }
         }
 
-        var systemImage: String {
+        public var systemImage: String {
             switch self {
             case .ftp:  return "network"
             case .ftps: return "lock.shield"
@@ -36,7 +36,7 @@ struct Connection: Identifiable, Codable, Hashable {
         }
     }
 
-    init(
+    public init(
         name: String = "",
         host: String = "",
         port: Int? = nil,
@@ -56,11 +56,11 @@ struct Connection: Identifiable, Codable, Hashable {
         self.notes              = notes
     }
 
-    var displayTitle: String {
+    public var displayTitle: String {
         name.isEmpty ? "\(username)@\(host)" : name
     }
 
-    var displaySubtitle: String {
+    public var displaySubtitle: String {
         "\(connectionProtocol.rawValue) · \(host):\(port)"
     }
 }

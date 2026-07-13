@@ -6,12 +6,12 @@ import Foundation
 /// turns one command into many — classic command injection. SFTP is binary, but
 /// path traversal in server-supplied listings (`../`, embedded `/`, RTL override)
 /// is just as dangerous when the names are turned into local file destinations.
-enum RemotePath {
+public enum RemotePath {
 
     /// Validate a string about to be sent inside an FTP command. Throws if the
     /// string contains `\r`, `\n`, or NUL — characters that would break the
     /// command framing or POSIX path semantics on the server side.
-    static func validateCommand(_ command: String) throws {
+    public static func validateCommand(_ command: String) throws {
         for scalar in command.unicodeScalars {
             switch scalar {
             case "\r", "\n", "\0":
@@ -25,7 +25,7 @@ enum RemotePath {
     /// Sanitize a server-supplied filename before using it as a local file
     /// destination or echoing it back as part of a server command. Returns
     /// `nil` if the name is unsafe and should be dropped from the listing.
-    static func sanitizedFilename(_ name: String) -> String? {
+    public static func sanitizedFilename(_ name: String) -> String? {
         guard !name.isEmpty, name != ".", name != ".." else { return nil }
 
         // Path separators in a filename → traversal vector.
@@ -43,7 +43,7 @@ enum RemotePath {
 
     /// Confirm a destination URL stays inside `base`, defeating an attacker that
     /// got `..` through earlier sanitization (defense in depth).
-    static func isContained(_ destination: URL, in base: URL) -> Bool {
+    public static func isContained(_ destination: URL, in base: URL) -> Bool {
         let destPath = destination.standardizedFileURL.path
         let basePath = base.standardizedFileURL.path
         return destPath == basePath
@@ -51,11 +51,11 @@ enum RemotePath {
     }
 }
 
-enum RemotePathError: LocalizedError {
+public enum RemotePathError: LocalizedError {
     case invalidCharacters
     case unsafeName(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .invalidCharacters:
             return "Path contains characters that are not allowed (control characters or NUL)."
