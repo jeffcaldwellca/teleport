@@ -181,6 +181,9 @@ struct SettingsView: View {
     @Bindable private var prefs = Preferences.shared
     @State private var localRootDisplay: String = SettingsView.currentLocalRoot()
     @State private var trustedHosts: [SSHHostKeyStore.TrustedHost] = []
+    @State private var cliInstalled = CommandLineToolInstaller.isInstalled()
+    @State private var cliMessage: String? = nil
+    @State private var cliMessageIsError = false
 
     var body: some View {
         TabView {
@@ -213,8 +216,50 @@ struct SettingsView: View {
             Section("Browser") {
                 Toggle("Show hidden files by default", isOn: $prefs.showHiddenByDefault)
             }
+
+            Section("Command line tool") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(cliInstalled ? "tport is installed" : "tport is not installed")
+                            .font(.callout)
+                        Text(cliInstalled
+                             ? CommandLineToolInstaller.installPath
+                             : "Install the scriptable command-line tool")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(cliInstalled ? "Reinstall" : "Install") { installCLI() }
+                }
+                if let cliMessage {
+                    Text(cliMessage)
+                        .font(.caption)
+                        .foregroundStyle(cliMessageIsError ? .red : .secondary)
+                }
+                Text("Adds a symlink at \(CommandLineToolInstaller.installPath) so you can run tport from Terminal. Requires administrator privileges.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private func installCLI() {
+        do {
+            try CommandLineToolInstaller.install()
+            cliInstalled = CommandLineToolInstaller.isInstalled()
+            cliMessageIsError = !cliInstalled
+            cliMessage = cliInstalled
+                ? "Installed. Open a new Terminal window and run \"tport --help\"."
+                : "The installer reported success, but /usr/local/bin/tport doesn't point at the app — check permissions on /usr/local/bin."
+        } catch CommandLineToolInstaller.InstallError.cancelled {
+            // Not an error — the user simply declined the password prompt.
+            cliMessageIsError = false
+            cliMessage = "Installation was cancelled."
+        } catch {
+            cliMessageIsError = true
+            cliMessage = error.localizedDescription
+        }
     }
 
     private var transfers: some View {
