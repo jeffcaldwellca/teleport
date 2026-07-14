@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://jeffcaldwellca.github.io/Teleport/sitemap.xml
+Sitemap: https://www.jeffcaldwell.ca/teleport/sitemap.xml
