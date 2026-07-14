@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleport — Native FTP, FTPS &amp; SFTP Client for macOS</title>
+<meta name="description" content="Teleport is a free, open-source native macOS app for FTP, FTPS, and SFTP file transfers, with tport — a scriptable command-line tool — built in.">
+<meta name="keywords" content="FTP client Mac, SFTP client macOS, FTPS client, macOS file transfer app, native FTP client, open source FTP client, command line FTP, SFTP CLI, tport, Teleport app">
+<meta name="author" content="Jeff Caldwell">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://jeffcaldwellca.github.io/Teleport/">
+<meta name="theme-color" content="#1E5FD9">
+
+<!-- Favicons -->
+<link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/img/apple-touch-icon.png">
+
+<!-- OpenGraph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Teleport">
+<meta property="og:title" content="Teleport — Native FTP, FTPS &amp; SFTP Client for macOS">
+<meta property="og:description" content="A free, open-source native macOS app for FTP, FTPS, and SFTP file transfers, with a scriptable command-line tool built in.">
+<meta property="og:url" content="https://jeffcaldwellca.github.io/Teleport/">
+<meta property="og:image" content="https://jeffcaldwellca.github.io/Teleport/assets/img/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Teleport — native FTP, FTPS and SFTP client for macOS">
+<meta property="og:locale" content="en_US">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Teleport — Native FTP, FTPS &amp; SFTP Client for macOS">
+<meta name="twitter:description" content="A free, open-source native macOS app for FTP, FTPS, and SFTP file transfers, with a scriptable command-line tool built in.">
+<meta name="twitter:image" content="https://jeffcaldwellca.github.io/Teleport/assets/img/og-image.png">
+
+<!-- Structured data: what the app is (feeds SEO rich results and AI answer engines) -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Teleport",
+  "alternateName": "tport",
+  "url": "https://jeffcaldwellca.github.io/Teleport/",
+  "downloadUrl": "https://github.com/jeffcaldwellca/Teleport/releases/latest",
+  "operatingSystem": "macOS 14+",
+  "applicationCategory": "UtilitiesApplication",
+  "description": "Teleport is a free, open-source native macOS app for FTP, FTPS, and SFTP file transfers, with tport, a scriptable command-line tool, built in.",
+  "softwareVersion": "1.0",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "author": {
+    "@type": "Person",
+    "name": "Jeff Caldwell"
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is Teleport?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Teleport is a free, open-source native macOS app for transferring files over FTP, FTPS, and SFTP."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is Teleport free?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Teleport is free and open source, licensed under the GNU General Public License v3.0."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does Teleport have a command-line interface?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Teleport includes tport, a scriptable command-line tool for automating file transfers from the terminal or shell scripts."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What macOS version does Teleport require?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Teleport requires macOS 14 (Sonoma) or later."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Where can I download Teleport?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Teleport is available for free from the Releases page on GitHub at github.com/jeffcaldwellca/Teleport."
+      }
+    }
+  ]
+}
+</script>
+
+<style>
+  @font-face {
+    font-family: 'Orbitron';
+    src: url('assets/fonts/Orbitron-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Orbitron';
+    src: url('assets/fonts/Orbitron-Black.ttf') format('truetype');
+    font-weight: 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Space Grotesk';
+    src: url('assets/fonts/SpaceGrotesk-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Space Grotesk';
+    src: url('assets/fonts/SpaceGrotesk-Medium.ttf') format('truetype');
+    font-weight: 500;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Space Grotesk';
+    src: url('assets/fonts/SpaceGrotesk-SemiBold.ttf') format('truetype');
+    font-weight: 600;
+    font-display: swap;
+  }
+
+  :root {
+    --blue-light: #5FADFB;
+    --blue-mid: #2E7CF0;
+    --blue-deep: #0F4FC7;
+    --blue-ink: #0A1A3A;
+    --ink: #101826;
+    --ink-soft: #4B5768;
+    --paper: #F5F8FE;
+    --card: #FFFFFF;
+    --line: #E3E9F5;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: 'Space Grotesk', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: 'Orbitron', sans-serif; margin: 0; }
+  p { margin: 0; }
+  a { color: inherit; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- Header ---------- */
+  header.site {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 2;
+  }
+  header.site .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 28px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: #fff;
+  }
+  .brand img { width: 28px; height: 28px; border-radius: 7px; }
+  .brand span {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 3px;
+  }
+  header.site nav a {
+    color: rgba(255,255,255,0.88);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 15px;
+  }
+  header.site nav a:hover { color: #fff; }
+
+  /* ---------- Hero ---------- */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--blue-light) 0%, var(--blue-mid) 45%, var(--blue-deep) 100%);
+    padding: 128px 24px 96px;
+    text-align: center;
+  }
+  .hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 55%, rgba(4,18,46,0.35) 100%);
+    pointer-events: none;
+  }
+  .hero .dot {
+    position: absolute;
+    border-radius: 50%;
+    background: #fff;
+    pointer-events: none;
+  }
+  .hero-inner { position: relative; z-index: 1; max-width: 640px; margin: 0 auto; }
+  .hero img.icon {
+    width: 96px; height: 96px;
+    border-radius: 22px;
+    box-shadow: 0 18px 40px rgba(5, 20, 60, 0.35);
+    margin-bottom: 26px;
+  }
+  .hero h1 {
+    color: #fff;
+    font-size: 44px;
+    font-weight: 900;
+    letter-spacing: 8px;
+    text-transform: uppercase;
+  }
+  .hero .tagline {
+    margin-top: 18px;
+    color: #fff;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: 0.5px;
+  }
+  .hero .subtext {
+    margin: 16px auto 0;
+    max-width: 520px;
+    color: rgba(255,255,255,0.88);
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  .hero .subtext code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: rgba(255,255,255,0.16);
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-size: 15px;
+  }
+  .cta {
+    margin-top: 34px;
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 13px 26px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 15px;
+    text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary {
+    background: #fff;
+    color: var(--blue-deep);
+    box-shadow: 0 10px 26px rgba(5, 20, 60, 0.28);
+  }
+  .btn-secondary {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.4);
+  }
+  .requirements {
+    margin-top: 22px;
+    color: rgba(255,255,255,0.65);
+    font-size: 13px;
+    letter-spacing: 0.2px;
+  }
+
+  /* ---------- Sections ---------- */
+  section { padding: 84px 24px; }
+  .section-head { text-align: center; max-width: 560px; margin: 0 auto 48px; }
+  .section-head h2 {
+    font-size: 26px;
+    letter-spacing: 2px;
+    color: var(--ink);
+  }
+  .section-head p {
+    margin-top: 12px;
+    color: var(--ink-soft);
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  .features {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .feature-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 26px 22px;
+  }
+  .feature-card .icon {
+    width: 42px; height: 42px;
+    border-radius: 11px;
+    background: linear-gradient(135deg, var(--blue-light), var(--blue-deep));
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 16px;
+  }
+  .feature-card .icon svg { width: 22px; height: 22px; stroke: #fff; }
+  .feature-card h3 {
+    font-size: 15px;
+    letter-spacing: 0.5px;
+    color: var(--ink);
+  }
+  .feature-card p {
+    margin-top: 10px;
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+  }
+
+  .faq { background: var(--card); }
+  .faq-list {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .faq-item {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 4px 20px;
+    background: var(--paper);
+  }
+  .faq-item summary {
+    cursor: pointer;
+    padding: 16px 0;
+    font-weight: 600;
+    font-size: 15.5px;
+    list-style: none;
+  }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-item summary::after {
+    content: "+";
+    float: right;
+    color: var(--blue-mid);
+    font-size: 20px;
+  }
+  .faq-item[open] summary::after { content: "–"; }
+  .faq-item p {
+    padding-bottom: 18px;
+    color: var(--ink-soft);
+    font-size: 14.5px;
+    line-height: 1.6;
+  }
+
+  footer.site {
+    padding: 40px 24px;
+    border-top: 1px solid var(--line);
+  }
+  footer.site .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  footer.site .links {
+    display: flex;
+    gap: 22px;
+  }
+  footer.site a {
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 14px;
+  }
+  footer.site a:hover { color: var(--blue-mid); }
+  footer.site .copy {
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+
+  @media (max-width: 860px) {
+    .features { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    header.site .wrap { padding-top: 20px; }
+    .hero { padding: 108px 20px 72px; }
+    .hero h1 { font-size: 32px; letter-spacing: 5px; }
+    .hero .tagline { font-size: 17px; }
+    .features { grid-template-columns: 1fr; }
+    section { padding: 60px 20px; }
+    footer.site .wrap { flex-direction: column; align-items: flex-start; }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body { background: #0B1220; color: #EAF0FB; }
+    :root { --ink: #EAF0FB; --ink-soft: #9FB0C9; --paper: #0B1220; --card: #10192C; --line: #1E2A42; }
+    .faq-item { background: #0B1220; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <img src="assets/img/icon-512.png" alt="">
+      <span>TELEPORT</span>
+    </a>
+    <nav>
+      <a href="https://github.com/jeffcaldwellca/Teleport">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <span class="dot" style="width:3px;height:3px;top:18%;left:12%;opacity:.5"></span>
+    <span class="dot" style="width:2px;height:2px;top:30%;left:22%;opacity:.35"></span>
+    <span class="dot" style="width:3px;height:3px;top:14%;left:82%;opacity:.4"></span>
+    <span class="dot" style="width:4px;height:4px;top:24%;left:90%;opacity:.5"></span>
+    <span class="dot" style="width:2px;height:2px;top:70%;left:8%;opacity:.35"></span>
+    <span class="dot" style="width:3px;height:3px;top:78%;left:92%;opacity:.4"></span>
+    <span class="dot" style="width:2px;height:2px;top:60%;left:50%;opacity:.3"></span>
+
+    <div class="hero-inner">
+      <img class="icon" src="assets/img/icon-512.png" alt="Teleport app icon">
+      <h1>Teleport</h1>
+      <p class="tagline">File transfers, teleported.</p>
+      <p class="subtext">
+        A free, open-source native FTP, FTPS, and SFTP client for macOS —
+        with <code>tport</code>, a scriptable command-line tool, built in.
+      </p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Download for Mac</a>
+        <a class="btn btn-secondary" href="https://github.com/jeffcaldwellca/Teleport">View on GitHub</a>
+      </div>
+      <p class="requirements">macOS 14 Sonoma or later · Free &amp; open source (GPL-3.0)</p>
+    </div>
+  </section>
+
+  <section class="features-section">
+    <div class="section-head">
+      <h2>WHY TELEPORT</h2>
+      <p>A native macOS file transfer client, built for people who live in both the Finder and the terminal.</p>
+    </div>
+    <div class="features">
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M17 15l3 2-3 2"/></svg>
+        </div>
+        <h3>FTP · FTPS · SFTP</h3>
+        <p>Connect to any server over FTP, FTPS, or SFTP — with SSH key authentication and host-key verification built in.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M8 9l3 3-3 3M13 15h3"/></svg>
+        </div>
+        <h3>Scriptable CLI</h3>
+        <p><code>tport</code> brings every core feature to the terminal — automate transfers and script deployments from any shell.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 4v4h-4M6 20v-4h4"/></svg>
+        </div>
+        <h3>Resume &amp; Conflict Handling</h3>
+        <p>Interrupted transfers pick up where they left off. Overwrite-if-newer conflict resolution keeps files in sync.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 9h16"/><circle cx="7" cy="6.5" r="0.6" fill="#fff" stroke="none"/></svg>
+        </div>
+        <h3>Native SwiftUI</h3>
+        <p>Built for macOS from the ground up — fast, lightweight, and right at home on your Mac.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="faq">
+    <div class="section-head">
+      <h2>FREQUENTLY ASKED QUESTIONS</h2>
+    </div>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>What is Teleport?</summary>
+        <p>Teleport is a free, open-source native macOS app for transferring files over FTP, FTPS, and SFTP.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Is Teleport free?</summary>
+        <p>Yes. Teleport is free and open source, licensed under the GNU General Public License v3.0.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does Teleport have a command-line interface?</summary>
+        <p>Yes. Teleport includes <code>tport</code>, a scriptable command-line tool for automating file transfers from the terminal or shell scripts.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What macOS version does Teleport require?</summary>
+        <p>Teleport requires macOS 14 (Sonoma) or later.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Where can I download Teleport?</summary>
+        <p>Teleport is available for free from the <a href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Releases page on GitHub</a>.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/jeffcaldwellca/Teleport">GitHub</a>
+      <a href="https://github.com/jeffcaldwellca/Teleport/blob/main/LICENSE">License (GPL-3.0)</a>
+      <a href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Releases</a>
+    </div>
+    <p class="copy">© 2026 Jeff Caldwell</p>
+  </div>
+</footer>
+
+</body>
+</html>
