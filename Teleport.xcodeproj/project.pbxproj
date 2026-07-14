@@ -28,6 +28,7 @@
 		902E9599438C55DED1A62649 /* CLIIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */; };
 		96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */; };
 		AB175E51C7A877DE631DFB97 /* TransferQueueViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */; };
+		AE86E191A0EC9C55BD2ACE6C /* CommandLineToolInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D663757B1665172D76E0DAB /* CommandLineToolInstaller.swift */; };
 		C4CFC4E0D839F6B4FA5B9EC1 /* TransferQueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD4A1EA2F79A462094CD5EA8 /* TransferQueueView.swift */; };
 		C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18E79DF52B793FCE0A588A95 /* MainToolbarContent.swift */; };
 		D022FB42EEC3445211183DFE /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B0D1DC65FBBB55D9B54BA1 /* SidebarView.swift */; };
@@ -66,6 +67,7 @@
 		4C55D35B6F34845417E65A45 /* HostKeyConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyConfirmationSheet.swift; sourceTree = "<group>"; };
 		4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteClientFactory.swift; sourceTree = "<group>"; };
 		52010299A996107540DC1CB6 /* RemoteClientErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteClientErrorTests.swift; sourceTree = "<group>"; };
+		5D663757B1665172D76E0DAB /* CommandLineToolInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandLineToolInstaller.swift; sourceTree = "<group>"; };
 		63EE900E42C5EE5922F84386 /* TeleportTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeleportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		68E09A53E47A7183B9706F42 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueueViewModel.swift; sourceTree = "<group>"; };
@@ -126,6 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				9CA01CB3D387DD75FE765260 /* BookmarkStore.swift */,
+				5D663757B1665172D76E0DAB /* CommandLineToolInstaller.swift */,
 				CA0542321805336558EF7D5D /* ConnectionStore.swift */,
 				923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */,
 				B064B88C8149977A91AB511C /* KeychainService.swift */,
@@ -362,6 +365,7 @@
 				F728A6DBF7C24F0AAF723722 /* BreadcrumbView.swift in Sources */,
 				4E8F6B483556E5D5406B6903 /* BrowserPaneView.swift in Sources */,
 				4733F7D2AFD12E11DDBF6F48 /* BrowserViewModel.swift in Sources */,
+				AE86E191A0EC9C55BD2ACE6C /* CommandLineToolInstaller.swift in Sources */,
 				5916F2793A703B0F061A1E06 /* ConnectionEditorView.swift in Sources */,
 				F6C5CA6A641228A8161E79D9 /* ConnectionStore.swift in Sources */,
 				3ED390AE22DCD16CC13BBF2C /* ContentView.swift in Sources */,
