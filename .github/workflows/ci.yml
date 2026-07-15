@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project Teleport.xcodeproj \
+            -scheme Teleport \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Test
+        run: |
+          # Per-test timeout so a hanging test fails the job instead of
+          # stalling it until the 6-hour runner limit.
+          xcodebuild test \
+            -project Teleport.xcodeproj \
+            -scheme Teleport \
+            -destination 'platform=macOS' \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Test TeleportKit (tport CLI + core)
+        run: cd TeleportKit && swift test

@@ -1,0 +1,150 @@
+name: Release
+
+# Triggers on version tags: git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, Sign, Notarize & Release
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Tooling ────────────────────────────────────────────────────────────
+
+      - name: Install tools
+        run: brew install xcodegen create-dmg
+
+      # ── Tests ──────────────────────────────────────────────────────────────
+      # Never ship a tag whose tests don't pass.
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -project Teleport.xcodeproj \
+            -scheme Teleport \
+            -destination 'platform=macOS' \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Test TeleportKit (tport CLI + core)
+        run: cd TeleportKit && swift test
+
+      # ── Code signing ───────────────────────────────────────────────────────
+      # Required secrets: MACOS_CERTIFICATE (base64 .p12), MACOS_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import certificate.p12 \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Append build keychain to search list (preserve existing keychains)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          # Verify the certificate was imported
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+          rm certificate.p12
+
+      # ── Version ────────────────────────────────────────────────────────────
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # ── Build, sign (app + embedded tport), and package ───────────────────
+      # scripts/build-dmg.sh drives scripts/build-release.sh, which builds
+      # Teleport.app, builds+signs tport, embeds it at Contents/Resources/tport,
+      # rebuilds the full-resolution AppIcon.icns, and re-signs the app — then
+      # packages the on-theme "drag to Applications" .dmg.
+
+      - name: Build and package
+        env:
+          TELEPORT_MARKETING_VERSION: ${{ steps.version.outputs.VERSION }}
+          TELEPORT_BUILD_NUMBER: ${{ github.run_number }}
+        run: scripts/build-dmg.sh --rebuild
+
+      - name: Locate built DMG
+        id: dmg
+        run: |
+          DMG_PATH=$(ls build/Teleport-*.dmg | head -n1)
+          echo "PATH=$DMG_PATH" >> "$GITHUB_OUTPUT"
+          echo "NAME=$(basename "$DMG_PATH")" >> "$GITHUB_OUTPUT"
+
+      # ── Notarize & staple ──────────────────────────────────────────────────
+      # Required secrets: NOTARIZATION_APPLE_ID, NOTARIZATION_PASSWORD (app-specific)
+
+      - name: Notarize DMG
+        env:
+          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+          DMG_PATH: ${{ steps.dmg.outputs.PATH }}
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --team-id "88ZPCYS252" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --wait \
+          || {
+            echo "::error::Notarization failed — fetching full log"
+            SUBMISSION_ID=$(xcrun notarytool history \
+              --apple-id "$NOTARIZATION_APPLE_ID" \
+              --team-id "88ZPCYS252" \
+              --password "$NOTARIZATION_PASSWORD" \
+              | awk '/id:/{print $2; exit}')
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$NOTARIZATION_APPLE_ID" \
+              --team-id "88ZPCYS252" \
+              --password "$NOTARIZATION_PASSWORD"
+            exit 1
+          }
+
+      - name: Staple notarization ticket
+        env:
+          DMG_PATH: ${{ steps.dmg.outputs.PATH }}
+        run: xcrun stapler staple "$DMG_PATH"
+
+      # ── GitHub Release ─────────────────────────────────────────────────────
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.dmg.outputs.PATH }}
+          generate_release_notes: true
