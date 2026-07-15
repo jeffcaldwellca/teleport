@@ -30,6 +30,13 @@ APP_PATH="$PRODUCT_DIR/$SCHEME.app"
 SIGN_IDENTITY="${TELEPORT_SIGN_IDENTITY:-Developer ID Application: Jeffrey Caldwell (88ZPCYS252)}"
 SIGN_TEAM="${TELEPORT_SIGN_TEAM:-88ZPCYS252}"
 
+# Override the version baked into Info.plist (via $(MARKETING_VERSION) /
+# $(CURRENT_PROJECT_VERSION)) for tagged CI releases. Local builds fall back
+# to the defaults in project.yml.
+VERSION_SETTINGS=()
+[[ -n "${TELEPORT_MARKETING_VERSION:-}" ]] && VERSION_SETTINGS+=("MARKETING_VERSION=$TELEPORT_MARKETING_VERSION")
+[[ -n "${TELEPORT_BUILD_NUMBER:-}" ]] && VERSION_SETTINGS+=("CURRENT_PROJECT_VERSION=$TELEPORT_BUILD_NUMBER")
+
 OPEN_AFTER=0
 RUN_AFTER=0
 CLEAN=0
@@ -87,6 +94,7 @@ xcodebuild \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
     DEVELOPMENT_TEAM="$SIGN_TEAM" \
+    "${VERSION_SETTINGS[@]}" \
     build
 
 if [[ ! -d "$APP_PATH" ]]; then
