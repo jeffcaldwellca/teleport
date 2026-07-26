@@ -10,7 +10,12 @@ struct FileNameCell: View {
     let item: FileItem
     @Bindable var vm: BrowserViewModel
 
-    @Environment(AppState.self) private var appState
+    /// Passed in rather than read from the environment on purpose. Table cells
+    /// are hosted individually on macOS and a lazily re-realized cell can come
+    /// up with an empty environment, so `@Environment(AppState.self)` here would
+    /// resolve to nil and trap on every body update. Don't convert this back.
+    let appState: AppState
+
     @FocusState private var renameFieldFocused: Bool
 
     private var isRenaming: Bool { vm.renamingItem?.id == item.id }
