@@ -367,7 +367,9 @@ struct FileListView: View {
     var body: some View {
         Table(of: FileItem.self, selection: $vm.selectedItems, sortOrder: sortOrder) {
             TableColumn("Name", sortUsing: KeyPathComparator(\FileItem.name)) { item in
-                FileNameCell(item: item, vm: vm)
+                // AppState goes in explicitly — a Table cell is hosted on its own
+                // and can't rely on inheriting the environment. See FileNameCell.
+                FileNameCell(item: item, vm: vm, appState: appState)
             }
             .width(min: 180, ideal: 340)
 
