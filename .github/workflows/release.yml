@@ -18,7 +18,7 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ── Tooling ────────────────────────────────────────────────────────────
 
@@ -108,6 +108,19 @@ jobs:
           echo "PATH=$DMG_PATH" >> "$GITHUB_OUTPUT"
           echo "NAME=$(basename "$DMG_PATH")" >> "$GITHUB_OUTPUT"
 
+      # Sign the disk image itself, not just the app inside it. Without this
+      # the DMG carries a valid stapled ticket but no signature of its own, and
+      # `spctl -a -t open --context context:primary-signature` rejects it with
+      # "no usable signature". Must run before notarization so the notary
+      # service sees the signed image. Identity matches scripts/build-release.sh.
+      - name: Sign DMG
+        env:
+          DMG_PATH: ${{ steps.dmg.outputs.PATH }}
+        run: |
+          codesign --force --sign "Developer ID Application: Jeffrey Caldwell (88ZPCYS252)" \
+            --timestamp "$DMG_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
+
       # ── Notarize & staple ──────────────────────────────────────────────────
       # Required secrets: NOTARIZATION_APPLE_ID, NOTARIZATION_PASSWORD (app-specific)
 
@@ -144,7 +157,7 @@ jobs:
       # ── GitHub Release ─────────────────────────────────────────────────────
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ steps.dmg.outputs.PATH }}
           generate_release_notes: true
