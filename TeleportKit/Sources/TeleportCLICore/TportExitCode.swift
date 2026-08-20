@@ -18,7 +18,7 @@ public enum TportExitCode: Int32 {
                 return .authFailed
             case .fileNotFound:
                 return .notFound
-            case .notConnected:
+            case .notConnected, .connectionFailed:
                 return .connectionFailed
             case .hostKeyUntrusted, .hostKeyMismatch:
                 return .hostKey
