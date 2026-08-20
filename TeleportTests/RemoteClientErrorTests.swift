@@ -20,4 +20,30 @@ final class RemoteClientErrorTests: XCTestCase {
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("SHA256:aa:bb:cc:dd"), message)
     }
+
+    /// A failed TCP connect surfaces through SwiftNIO as `NIOConnectionError`,
+    /// which is `CustomStringConvertible` but *not* `LocalizedError`. The GUI
+    /// renders every error with `localizedDescription`, so an unmapped NIO
+    /// error reaches the user as "The operation couldn't be completed.
+    /// (NIOPosix.NIOConnectionError error 1.)" — no host, no port, no reason.
+    func test_sftpConnectFailure_producesHumanReadableMessage() async {
+        let connection = Connection(
+            name: "dead", host: "127.0.0.1", port: 59999,
+            username: "nobody", connectionProtocol: .sftp
+        )
+        let client = SFTPClient(connection: connection, password: "unused")
+
+        do {
+            try await client.connect()
+            XCTFail("Expected connect to a closed port to fail")
+        } catch {
+            let message = error.localizedDescription
+            XCTAssertFalse(
+                message.contains("couldn't be completed"),
+                "Raw NIO error leaked to the user: \(message)"
+            )
+            XCTAssertTrue(message.contains("127.0.0.1"), message)
+            XCTAssertTrue(message.contains("59999"), message)
+        }
+    }
 }

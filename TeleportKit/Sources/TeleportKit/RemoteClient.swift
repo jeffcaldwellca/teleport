@@ -64,6 +64,7 @@ public protocol RemoteClient: AnyObject, Sendable {
 
 public enum RemoteClientError: LocalizedError {
     case notConnected
+    case connectionFailed(String)
     case authenticationFailed
     case permissionDenied
     case fileNotFound(String)
@@ -76,6 +77,7 @@ public enum RemoteClientError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .notConnected:           return "Not connected"
+        case .connectionFailed(let m): return "Connection failed: \(m)"
         case .authenticationFailed:   return "Authentication failed"
         case .permissionDenied:       return "Permission denied"
         case .fileNotFound(let p):    return "File not found: \(p)"

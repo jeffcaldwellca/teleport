@@ -79,6 +79,8 @@ public actor SFTPClient: RemoteClient {
                 host: connection.host, port: connection.port,
                 expected: mismatch.expected, actual: mismatch.actual
             )
+        } catch {
+            throw translateConnectFailure(error)
         }
         ssh = client
 
@@ -102,7 +104,56 @@ public actor SFTPClient: RemoteClient {
             }
         }
 
-        sftp = try await client.openSFTP()
+        do {
+            sftp = try await client.openSFTP()
+        } catch {
+            throw translateConnectFailure(error)
+        }
+    }
+
+    /// Neither SwiftNIO's `NIOConnectionError` nor Citadel's error types
+    /// (`AuthenticationFailed`, `SSHClientError`, `CitadelError`, …) conform to
+    /// `LocalizedError`. Foundation therefore bridges them to a bare NSError,
+    /// and every caller that reports `error.localizedDescription` — which is
+    /// what the GUI's alerts and the connection editor's test button do —
+    /// renders them as "The operation couldn't be completed.
+    /// (NIOPosix.NIOConnectionError error 1.)": no host, no port, no reason.
+    ///
+    /// Translate them at this boundary so a failed connect always says what
+    /// actually went wrong. `FTPClient` already reports at this level of
+    /// detail; this brings SFTP in line.
+    private func translateConnectFailure(_ error: Error) -> Error {
+        let target = "\(connection.host):\(connection.port)"
+
+        if error is AuthenticationFailed { return RemoteClientError.authenticationFailed }
+        if let ssh = error as? SSHClientError, case .allAuthenticationOptionsFailed = ssh {
+            return RemoteClientError.authenticationFailed
+        }
+
+        switch error {
+        case let nio as NIOConnectionError:
+            // DNS failures carry no `connectionErrors` — report the lookup instead.
+            if let dns = nio.dnsAError ?? nio.dnsAAAAError {
+                return RemoteClientError.connectionFailed(
+                    "Could not resolve \(connection.host) — \(dns)"
+                )
+            }
+            let reasons = nio.connectionErrors
+                .map { String(describing: $0.error) }
+                .joined(separator: "; ")
+            return RemoteClientError.connectionFailed(
+                "Could not reach \(target)\(reasons.isEmpty ? "" : " — \(reasons)"). " +
+                "Check that the host, port, and protocol are correct."
+            )
+
+        // Anything already carrying its own message (including RemoteClientError)
+        // is left alone — it already survives `localizedDescription`.
+        case let localized as LocalizedError where localized.errorDescription != nil:
+            return error
+
+        default:
+            return RemoteClientError.connectionFailed("Could not connect to \(target) — \(error)")
+        }
     }
 
     private func buildAuthMethod() async throws -> SSHAuthenticationMethod {
