@@ -11,8 +11,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.0.3"
-    CURRENT_PROJECT_VERSION: "4"
+    MARKETING_VERSION: "1.0.4"
+    CURRENT_PROJECT_VERSION: "5"
 
 packages:
   TeleportKit:
