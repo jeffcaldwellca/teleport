@@ -449,10 +449,12 @@ struct FileListView: View {
             if !selection.isEmpty { appState.focusedPane = side }
         }
         // Move real keyboard focus here when this pane becomes the active one
-        // (e.g. via the Switch Pane command). Setting one List focused unsets
-        // the other automatically.
+        // (e.g. via the Switch Pane command), and give it up when the other pane
+        // takes over. Dropping focus has to be explicit: the panes are hosted
+        // separately (see PersistentHSplitView), so they sit in different SwiftUI
+        // focus scopes and one taking focus no longer unsets the other.
         .onChange(of: appState.focusedPane) { _, pane in
-            if pane == side { listFocused = true }
+            listFocused = (pane == side)
         }
         // Double-click to open/download. Implemented via the backing NSTableView's
         // native doubleAction (not a SwiftUI gesture, which would suppress
