@@ -29,6 +29,7 @@
 		96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */; };
 		AB175E51C7A877DE631DFB97 /* TransferQueueViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */; };
 		AE86E191A0EC9C55BD2ACE6C /* CommandLineToolInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D663757B1665172D76E0DAB /* CommandLineToolInstaller.swift */; };
+		C0B0AB72C3FB4AD4A73C71E5 /* PersistentHSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 645091BFA5461EF2A50D5B73 /* PersistentHSplitView.swift */; };
 		C4CFC4E0D839F6B4FA5B9EC1 /* TransferQueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD4A1EA2F79A462094CD5EA8 /* TransferQueueView.swift */; };
 		C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18E79DF52B793FCE0A588A95 /* MainToolbarContent.swift */; };
 		D022FB42EEC3445211183DFE /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B0D1DC65FBBB55D9B54BA1 /* SidebarView.swift */; };
@@ -69,6 +70,7 @@
 		52010299A996107540DC1CB6 /* RemoteClientErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteClientErrorTests.swift; sourceTree = "<group>"; };
 		5D663757B1665172D76E0DAB /* CommandLineToolInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandLineToolInstaller.swift; sourceTree = "<group>"; };
 		63EE900E42C5EE5922F84386 /* TeleportTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeleportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		645091BFA5461EF2A50D5B73 /* PersistentHSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentHSplitView.swift; sourceTree = "<group>"; };
 		68E09A53E47A7183B9706F42 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueueViewModel.swift; sourceTree = "<group>"; };
 		70CA4CDC200A3CC76A613853 /* FileRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileRowView.swift; sourceTree = "<group>"; };
@@ -214,6 +216,7 @@
 			isa = PBXGroup;
 			children = (
 				3A8D05848D64FCD686BABC00 /* ContentView.swift */,
+				645091BFA5461EF2A50D5B73 /* PersistentHSplitView.swift */,
 				EEE63DDB9593E76B80033389 /* Browser */,
 				0B1D871D8EA24E11C3DD0822 /* Queue */,
 				8BBEE1816D111D75530665E9 /* Sheets */,
@@ -376,6 +379,7 @@
 				09440E434B76FB9A5E4AFFB4 /* LocalFileService.swift in Sources */,
 				C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */,
 				74D8B9CEF55EA10158B2458C /* PermissionsEditorSheet.swift in Sources */,
+				C0B0AB72C3FB4AD4A73C71E5 /* PersistentHSplitView.swift in Sources */,
 				7DACB011B15E4F27D8568BC1 /* Preferences.swift in Sources */,
 				96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */,
 				E84ADC8D9BE75AF53D69890C /* RemoteEditManager.swift in Sources */,

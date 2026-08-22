@@ -18,6 +18,9 @@ struct ContentView: View {
     }
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
+    /// Where the browser divider's position is persisted across launches.
+    private static let splitAutosaveName = "com.teleport.browserSplit"
+
     var body: some View {
         @Bindable var state = appState
 
@@ -26,7 +29,15 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
                 // ── Two-pane browser ──────────────────────────────
-                HSplitView {
+                // The divider belongs to NSSplitView, and each pane keeps one
+                // hosting controller for the window's lifetime (see RemotePane).
+                // Opening or closing a session therefore changes only what's
+                // *inside* a pane, never the split's subviews, so the divider
+                // stays where the user left it.
+                //
+                // Each pane is hosted separately and starts with an empty
+                // environment, so AppState goes in explicitly.
+                PersistentHSplitView(autosaveName: Self.splitAutosaveName) {
                     BrowserPaneView(
                         vm: localBrowser,
                         side: .local,
@@ -34,21 +45,10 @@ struct ContentView: View {
                         systemImage: "laptopcomputer",
                         remoteSession: nil
                     )
-                    .frame(minWidth: 280)
-
-                    if let session = appState.activeSession {
-                        BrowserPaneView(
-                            vm: session.browser,
-                            side: .remote,
-                            paneTitle: session.connection.displayTitle,
-                            systemImage: session.connection.connectionProtocol.systemImage,
-                            remoteSession: session
-                        )
-                        .frame(minWidth: 280)
-                    } else {
-                        NoConnectionView()
-                            .frame(minWidth: 280)
-                    }
+                    .environment(appState)
+                } trailing: {
+                    RemotePane(session: appState.activeSession)
+                        .environment(appState)
                 }
 
                 Divider()
@@ -120,6 +120,33 @@ struct ContentView: View {
             }
             // Seed local browser
             await localBrowser.refresh()
+        }
+    }
+}
+
+// MARK: - Remote Pane
+
+/// The right-hand browser pane.
+///
+/// Connecting and disconnecting swap the *content* here rather than the child of
+/// the split itself. Written as an `if let` directly inside the split, SwiftUI
+/// would give the two branches different identities and hand `NSSplitView` a new
+/// subview on every connect, which costs the divider position (and the pane's
+/// scroll and selection state along with it).
+private struct RemotePane: View {
+    let session: RemoteSession?
+
+    var body: some View {
+        if let session {
+            BrowserPaneView(
+                vm: session.browser,
+                side: .remote,
+                paneTitle: session.connection.displayTitle,
+                systemImage: session.connection.connectionProtocol.systemImage,
+                remoteSession: session
+            )
+        } else {
+            NoConnectionView()
         }
     }
 }
