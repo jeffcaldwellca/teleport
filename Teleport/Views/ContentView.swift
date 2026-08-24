@@ -221,7 +221,7 @@ struct SettingsView: View {
             security
                 .tabItem { Label("Security", systemImage: "lock.shield") }
         }
-        .frame(width: 480, height: 320)
+        .frame(width: 480, height: 360)
     }
 
     private var general: some View {
@@ -242,6 +242,11 @@ struct SettingsView: View {
 
             Section("Browser") {
                 Toggle("Show hidden files by default", isOn: $prefs.showHiddenByDefault)
+                Picker("Text size", selection: $prefs.fileListTextSize) {
+                    ForEach(Preferences.FileListTextSize.allCases) { size in
+                        Text(size.label).tag(size)
+                    }
+                }
             }
 
             Section("Command line tool") {

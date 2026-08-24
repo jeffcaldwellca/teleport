@@ -339,6 +339,9 @@ struct FileListView: View {
         vm.isLocal ? [.teleportRemoteItem] : [.fileURL]
     }
 
+    /// Read in `body` so the pane re-renders live when Settings changes it.
+    private var textSize: Preferences.FileListTextSize { Preferences.shared.fileListTextSize }
+
     /// Bridges the Table's clickable column headers to the view model's sort
     /// state. Not stored anywhere — derived from the VM on read and pushed back
     /// on write — so it can't drift out of sync or loop with `didSet`.
@@ -369,12 +372,13 @@ struct FileListView: View {
             TableColumn("Name", sortUsing: KeyPathComparator(\FileItem.name)) { item in
                 // AppState goes in explicitly — a Table cell is hosted on its own
                 // and can't rely on inheriting the environment. See FileNameCell.
-                FileNameCell(item: item, vm: vm, appState: appState)
+                FileNameCell(item: item, vm: vm, appState: appState, textSize: textSize)
             }
             .width(min: 180, ideal: 340)
 
             TableColumn("Date Modified", sortUsing: KeyPathComparator(\FileItem.modifiedDate)) { item in
                 Text(item.modifiedDate.map { $0.formatted(.relative(presentation: .named)) } ?? "—")
+                    .font(.system(size: textSize.pointSize))
                     .foregroundStyle(item.modifiedDate == nil ? .tertiary : .secondary)
                     .lineLimit(1)
             }
@@ -382,7 +386,7 @@ struct FileListView: View {
 
             TableColumn("Size", sortUsing: KeyPathComparator(\FileItem.size)) { item in
                 Text(item.isDirectory ? "—" : item.displaySize)
-                    .font(.body.monospacedDigit())
+                    .font(.system(size: textSize.pointSize).monospacedDigit())
                     .foregroundStyle(item.isDirectory ? .tertiary : .secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
