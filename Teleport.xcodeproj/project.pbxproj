@@ -24,6 +24,7 @@
 		78CE24C6D6DEDCC0B1FBE5A4 /* TransferTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEB2D57BE0A49B776D48D69 /* TransferTask.swift */; };
 		7DACB011B15E4F27D8568BC1 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DD1DDDDA4F5165D7641F5A3 /* Preferences.swift */; };
 		8629C8E19BC3D2BFC47C258E /* RemoteClientErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52010299A996107540DC1CB6 /* RemoteClientErrorTests.swift */; };
+		89ADC2A9441653B33A5095B3 /* PreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C130DEB5DDFF9D7EC561F1FA /* PreferencesTests.swift */; };
 		8B8949B88D01454D221D546B /* FileRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70CA4CDC200A3CC76A613853 /* FileRowView.swift */; };
 		902E9599438C55DED1A62649 /* CLIIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */; };
 		96BB23B3BE3E821FC39F3980 /* RemoteClientFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */; };
@@ -87,6 +88,7 @@
 		B790A3DA6A5093A87661D377 /* RemoteFileRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFileRef.swift; sourceTree = "<group>"; };
 		BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteEditManager.swift; sourceTree = "<group>"; };
 		C1263184A33142977C401CA1 /* SSHKeyFingerprintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyFingerprintTests.swift; sourceTree = "<group>"; };
+		C130DEB5DDFF9D7EC561F1FA /* PreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesTests.swift; sourceTree = "<group>"; };
 		CA0542321805336558EF7D5D /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
 		E6B4C6C54C5E2B2010633CE0 /* BrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserViewModel.swift; sourceTree = "<group>"; };
 		EDB32E3DF50C2FF41DB52C79 /* BrowserPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPaneView.swift; sourceTree = "<group>"; };
@@ -182,6 +184,7 @@
 			children = (
 				B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */,
 				9DF086A1C6447D89589EFB4A /* FileItemTests.swift */,
+				C130DEB5DDFF9D7EC561F1FA /* PreferencesTests.swift */,
 				52010299A996107540DC1CB6 /* RemoteClientErrorTests.swift */,
 				29BED02A2BEF9C1D88E357CF /* RemotePathTests.swift */,
 				9CC2C4189808F11BDE3E78AA /* SSHHostKeyStoreTests.swift */,
@@ -351,6 +354,7 @@
 			files = (
 				902E9599438C55DED1A62649 /* CLIIntegrationTests.swift in Sources */,
 				D30B93CF87BD5440EA11535C /* FileItemTests.swift in Sources */,
+				89ADC2A9441653B33A5095B3 /* PreferencesTests.swift in Sources */,
 				8629C8E19BC3D2BFC47C258E /* RemoteClientErrorTests.swift in Sources */,
 				FF7A676BB7183BB16001B57A /* RemotePathTests.swift in Sources */,
 				46B17803D4BAF873DDB5CD32 /* SSHHostKeyStoreTests.swift in Sources */,
