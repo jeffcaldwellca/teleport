@@ -6,13 +6,23 @@ final class PreferencesTests: XCTestCase {
 
     private static let textSizeKey = "pref.fileListTextSize"
 
+    /// These tests run inside the app process, so `UserDefaults.standard` is
+    /// the user's real preferences domain. Start each test from a clean slate,
+    /// then put back whatever was there.
+    private var savedTextSize: String?
+
     override func setUp() {
         super.setUp()
+        savedTextSize = UserDefaults.standard.string(forKey: Self.textSizeKey)
         UserDefaults.standard.removeObject(forKey: Self.textSizeKey)
     }
 
     override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: Self.textSizeKey)
+        if let savedTextSize {
+            UserDefaults.standard.set(savedTextSize, forKey: Self.textSizeKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.textSizeKey)
+        }
         super.tearDown()
     }
 
@@ -36,6 +46,22 @@ final class PreferencesTests: XCTestCase {
     func test_fileListTextSize_unknownStoredValueFallsBackToMedium() {
         UserDefaults.standard.set("gigantic", forKey: Self.textSizeKey)
         XCTAssertEqual(Preferences.shared.fileListTextSize, .medium)
+    }
+
+    /// The browser panes read the preference inside their `body`; open panes
+    /// must re-render the moment Settings changes it. `@Observable` only
+    /// instruments stored properties, so a computed, defaults-backed property
+    /// has to opt in explicitly.
+    @MainActor
+    func test_fileListTextSize_changesAreObservable_soOpenPanesRerenderLive() {
+        let fired = expectation(description: "observation onChange fired")
+        withObservationTracking {
+            _ = Preferences.shared.fileListTextSize
+        } onChange: {
+            fired.fulfill()
+        }
+        Preferences.shared.fileListTextSize = .large
+        wait(for: [fired], timeout: 1)
     }
 
     func test_fileListTextSize_mediumIsTheSystemBodySize_soTheDefaultChangesNothing() {

@@ -16,6 +16,10 @@ struct FileNameCell: View {
     /// resolve to nil and trap on every body update. Don't convert this back.
     let appState: AppState
 
+    /// Also passed in explicitly (see `appState`): a `.font` set on the Table
+    /// would arrive through the environment, which a re-realized cell may lack.
+    let textSize: Preferences.FileListTextSize
+
     @FocusState private var renameFieldFocused: Bool
 
     private var isRenaming: Bool { vm.renamingItem?.id == item.id }
@@ -30,9 +34,10 @@ struct FileNameCell: View {
 
     private var icon: some View {
         Image(systemName: item.systemImage)
+            .font(.system(size: textSize.pointSize))
             .foregroundStyle(iconColor)
             .opacity(item.isHidden ? 0.55 : 1)
-            .frame(width: 20, alignment: .center)
+            .frame(width: textSize.iconSize, alignment: .center)
             .imageScale(.medium)
     }
 
@@ -40,6 +45,7 @@ struct FileNameCell: View {
         HStack(spacing: 8) {
             icon
             TextField("Name", text: $vm.renameText)
+                .font(.system(size: textSize.pointSize))
                 .textFieldStyle(.roundedBorder)
                 .focused($renameFieldFocused)
                 .onSubmit { commitRename() }
@@ -54,6 +60,7 @@ struct FileNameCell: View {
                     renameFieldFocused = true
                 }
         }
+        .padding(.vertical, textSize.rowPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -61,10 +68,12 @@ struct FileNameCell: View {
         HStack(spacing: 8) {
             icon
             Text(item.name)
+                .font(.system(size: textSize.pointSize))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(item.isHidden ? Color.secondary : Color.primary)
         }
+        .padding(.vertical, textSize.rowPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

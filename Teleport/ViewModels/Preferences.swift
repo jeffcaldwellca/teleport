@@ -121,11 +121,20 @@ final class Preferences {
         set { defaults.set(newValue.rawValue, forKey: Keys.downloadDestination) }
     }
 
+    /// The browser panes read this inside `body` and must re-render when it
+    /// changes. `@Observable` only instruments stored properties, so this
+    /// defaults-backed computed property registers with the observation
+    /// registrar by hand.
     var fileListTextSize: FileListTextSize {
         get {
-            FileListTextSize(rawValue: defaults.string(forKey: Keys.fileListTextSize) ?? "") ?? .medium
+            access(keyPath: \.fileListTextSize)
+            return FileListTextSize(rawValue: defaults.string(forKey: Keys.fileListTextSize) ?? "") ?? .medium
         }
-        set { defaults.set(newValue.rawValue, forKey: Keys.fileListTextSize) }
+        set {
+            withMutation(keyPath: \.fileListTextSize) {
+                defaults.set(newValue.rawValue, forKey: Keys.fileListTextSize)
+            }
+        }
     }
 
     private init() {}
