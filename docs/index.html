@@ -370,6 +370,39 @@
     color: var(--ink-soft);
   }
 
+  .install { scroll-margin-top: 80px; }
+  .install-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    max-width: 920px;
+    margin: 0 auto;
+  }
+  .install-card pre.cmd {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--blue-ink);
+    color: #EAF0FB;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    -webkit-user-select: all;
+    user-select: all;
+  }
+  .install-card pre.cmd code { font-family: inherit; }
+  .install-card p code { white-space: nowrap; }
+  .install-card .fine { font-size: 13px; opacity: 0.85; }
+  .btn-download {
+    margin-top: 6px;
+    background: var(--blue-mid);
+    color: #fff;
+    box-shadow: 0 8px 20px rgba(46, 124, 240, 0.28);
+  }
+
   .compare { background: var(--card); }
   .compare-scroll {
     max-width: 1080px;
@@ -482,6 +515,7 @@
     .hero h1 { font-size: 32px; letter-spacing: 5px; }
     .hero .tagline { font-size: 17px; }
     .features { grid-template-columns: 1fr; }
+    .install-grid { grid-template-columns: 1fr; }
     section { padding: 60px 20px; }
     table.compare-table { font-size: 13px; }
     table.compare-table th, table.compare-table td { padding: 10px 12px; }
@@ -504,6 +538,7 @@
       <span>TELEPORT</span>
     </a>
     <nav>
+      <a href="#install">Install</a>
       <a href="https://github.com/jeffcaldwellca/Teleport">GitHub ↗</a>
     </nav>
   </div>
@@ -569,6 +604,27 @@
         </div>
         <h3>Native SwiftUI</h3>
         <p>Built for macOS from the ground up — fast, lightweight, and right at home on your Mac.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="install" id="install">
+    <div class="section-head">
+      <h2>GET TELEPORT</h2>
+      <p>Install with Homebrew or grab the notarized disk image — either way, <code>tport</code> comes along.</p>
+    </div>
+    <div class="install-grid">
+      <div class="feature-card install-card">
+        <h3>HOMEBREW</h3>
+        <pre class="cmd"><code>brew install --cask jeffcaldwellca/tap/teleport-ftp</code></pre>
+        <p>Installs Teleport.app and links <code>tport</code> onto your <code>PATH</code>. Update later with <code>brew upgrade --cask teleport-ftp</code>.</p>
+        <p class="fine">The cask is <code>teleport-ftp</code> — the bare <code>teleport</code> name in Homebrew belongs to an unrelated SSH product.</p>
+      </div>
+      <div class="feature-card install-card">
+        <h3>DIRECT DOWNLOAD</h3>
+        <p><a class="btn btn-download" href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Download for Mac</a></p>
+        <p>Open the <code>.dmg</code> and drag Teleport to Applications. Signed and notarized, so it opens without Gatekeeper warnings.</p>
+        <p class="fine">Want <code>tport</code> too? Settings › General › Install Command Line Tool.</p>
       </div>
     </div>
   </section>
