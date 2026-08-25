@@ -100,7 +100,7 @@
       "name": "Where can I download Teleport?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Teleport is available for free from the Releases page on GitHub at github.com/jeffcaldwellca/Teleport."
+        "text": "Teleport is available for free from the Releases page on GitHub at github.com/jeffcaldwellca/Teleport, or with Homebrew: brew install --cask jeffcaldwellca/tap/teleport-ftp."
       }
     },
     {
@@ -300,8 +300,23 @@
     color: #fff;
     border: 1px solid rgba(255,255,255,0.4);
   }
+  .brew {
+    margin-top: 18px;
+    color: rgba(255,255,255,0.65);
+    font-size: 13px;
+    letter-spacing: 0.2px;
+  }
+  .brew code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.9);
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    user-select: all;
+  }
   .requirements {
-    margin-top: 22px;
+    margin-top: 14px;
     color: rgba(255,255,255,0.65);
     font-size: 13px;
     letter-spacing: 0.2px;
@@ -516,6 +531,7 @@
         <a class="btn btn-primary" href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Download for Mac</a>
         <a class="btn btn-secondary" href="https://github.com/jeffcaldwellca/Teleport">View on GitHub</a>
       </div>
+      <p class="brew">or <code>brew install --cask jeffcaldwellca/tap/teleport-ftp</code></p>
       <p class="requirements">macOS 14 Sonoma or later · Free &amp; open source (GPL-3.0)</p>
     </div>
   </section>
@@ -652,7 +668,7 @@
       </details>
       <details class="faq-item">
         <summary>Where can I download Teleport?</summary>
-        <p>Teleport is available for free from the <a href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Releases page on GitHub</a>.</p>
+        <p>Teleport is available for free from the <a href="https://github.com/jeffcaldwellca/Teleport/releases/latest">Releases page on GitHub</a>, or with Homebrew: <code>brew install --cask jeffcaldwellca/tap/teleport-ftp</code>.</p>
       </details>
       <details class="faq-item">
         <summary>Is Teleport a free alternative to Cyberduck, Transmit, ForkLift, or FileZilla?</summary>

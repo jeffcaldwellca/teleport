@@ -161,3 +161,40 @@ jobs:
         with:
           files: ${{ steps.dmg.outputs.PATH }}
           generate_release_notes: true
+
+      # ── Homebrew tap ───────────────────────────────────────────────────────
+      # Optional secret: TAP_TOKEN — PAT with Contents: write on
+      # jeffcaldwellca/homebrew-tap; bumps Casks/teleport-ftp.rb to this
+      # version. Skipped with a warning (not a failure) when the secret is
+      # absent, so a missing token never sinks a release that has already been
+      # published above. The DMG is hashed here, after stapling, because
+      # stapling changes the bytes — this is the exact file users download.
+      # (The cask is "teleport-ftp", not "teleport": homebrew/cask aliases the
+      # bare name to Gravitational's teleport-suite, so a bare token would let
+      # `brew upgrade --cask teleport` replace this app with theirs.)
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          DMG_PATH: ${{ steps.dmg.outputs.PATH }}
+        run: |
+          if [[ -z "$TAP_TOKEN" ]]; then
+            echo "::warning::TAP_TOKEN secret is not set — Casks/teleport-ftp.rb in jeffcaldwellca/homebrew-tap was NOT updated"
+            exit 0
+          fi
+          SHA256=$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')
+          git clone --quiet --depth 1 \
+            "https://x-access-token:$TAP_TOKEN@github.com/jeffcaldwellca/homebrew-tap.git" tap
+          cd tap
+          sed -i '' \
+            -e "s/^  version \".*\"/  version \"$VERSION\"/" \
+            -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
+            Casks/teleport-ftp.rb
+          if git diff --quiet; then echo "Casks/teleport-ftp.rb already at $VERSION"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/teleport-ftp.rb
+          git commit --quiet -m "teleport-ftp $VERSION"
+          git push --quiet
+          echo "Bumped jeffcaldwellca/tap/teleport-ftp to $VERSION"

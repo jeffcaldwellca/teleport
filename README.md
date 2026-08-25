@@ -58,8 +58,9 @@ tport test sftp://user@example.com
 ```
 
 Other subcommands: `mkdir`, `rm`, `mv`, `chmod`, `chown`, `stat`. Run `tport --help`
-or `tport <command> --help` for full usage. Install it from Teleport's Settings
-("Install Command Line Tool"), or build it directly — see below.
+or `tport <command> --help` for full usage. Homebrew installs put it on your `PATH`
+automatically; otherwise install it from Teleport's Settings ("Install Command Line
+Tool"), or build it directly — see below.
 
 ## How Teleport compares
 
@@ -82,7 +83,21 @@ macOS 14 (Sonoma) or later.
 
 ## Installation
 
-Download the latest signed build from the [Releases page](https://github.com/jeffcaldwellca/Teleport/releases).
+### Homebrew
+
+```sh
+brew install --cask jeffcaldwellca/tap/teleport-ftp
+```
+
+Installs Teleport.app and puts `tport` on your `PATH`; `brew upgrade --cask teleport-ftp`
+keeps it current. (The cask is `teleport-ftp` because the bare `teleport` name in Homebrew
+belongs to Gravitational's unrelated SSH product.)
+
+### Direct download
+
+Download the latest signed build from the [Releases page](https://github.com/jeffcaldwellca/Teleport/releases),
+open the `.dmg`, and drag Teleport to Applications. `tport` can then be installed from
+Settings > General > "Install Command Line Tool".
 
 ### Building from source
 
