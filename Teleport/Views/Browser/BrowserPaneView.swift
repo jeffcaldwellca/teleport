@@ -831,8 +831,17 @@ struct FileListView: View {
 
     // MARK: Move / Copy / Duplicate
 
+    /// Clear the drop highlight. Row-level drops (same-pane drags) are consumed
+    /// by the table, so the pane delegate that lit the highlight never hears
+    /// that the drag ended; the row handlers reset it themselves.
+    private func clearDropHover() {
+        isDropTargeted = false
+        dropFolderFrame = nil
+    }
+
     /// Remote items dropped on a remote folder row → server-side move (rename).
     private func moveRemote(_ refs: [RemoteFileRef], into folder: FileItem) {
+        clearDropHover()
         guard let session = remoteSession else { return }
         Task {
             for ref in refs {
@@ -861,6 +870,7 @@ struct FileListView: View {
     /// Local URLs dropped on a local folder row: items dragged from this pane
     /// move (Finder same-volume semantics); anything from elsewhere is copied.
     private func moveOrCopyLocal(_ urls: [URL], into folder: FileItem) {
+        clearDropHover()
         let folderURL = URL(fileURLWithPath: folder.path)
         for url in urls {
             guard url.path != folder.path,
