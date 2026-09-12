@@ -327,17 +327,15 @@ struct FileListView: View {
     @State private var showingPermissions = false
     @State private var permissionsItem: FileItem? = nil
     @State private var isDropTargeted = false
+    /// Frame (in the Table's coordinate space) of the folder row a drag is
+    /// hovering, so it can be highlighted as the drop target.
+    @State private var dropFolderFrame: CGRect? = nil
+    @State private var tableHandle = TableHandle()
     @FocusState private var listFocused: Bool
 
-    /// Remote pane accepts local file URLs (upload). Local pane accepts the
-    /// internal remote-item payload (download) whenever a session is live.
-    private var canAcceptDrop: Bool {
-        vm.isLocal ? appState.activeSession != nil : remoteSession != nil
-    }
-
-    private var acceptedDropTypes: [UTType] {
-        vm.isLocal ? [.teleportRemoteItem] : [.fileURL]
-    }
+    /// Both panes take local file URLs and the internal remote-item payload;
+    /// `dropOperation` decides per drag what (if anything) a drop would do.
+    private let acceptedDropTypes: [UTType] = [.teleportRemoteItem, .fileURL]
 
     /// Read in `body` so the pane re-renders live when Settings changes it.
     private var textSize: Preferences.FileListTextSize { Preferences.shared.fileListTextSize }
@@ -394,16 +392,22 @@ struct FileListView: View {
         } rows: {
             ForEach(vm.displayedItems) { item in
                 // Drag lives on the row, not the cell, so the framework can tell
-                // a click (select) from a drag. Folder rows are also drop
-                // targets: dropping an item on a folder moves/copies it inside.
-                if vm.isLocal, item.isDirectory, !item.isSymlink {
+                // a click (select) from a drag.
+                //
+                // Drops are split by origin. Drags from the *other* pane or
+                // Finder are handled pane-wide by `PaneDropDelegate`, which
+                // resolves the hovered folder row itself. Drags that start in
+                // this same table never reach the pane-level drop handler, so
+                // folder rows carry a row-level `dropDestination` for that one
+                // payload only. It has to stay that narrow: once a row claims a
+                // payload type the table rejects it everywhere else (file rows,
+                // empty space), which would kill the pane-wide fallback.
+                if vm.isLocal, item.isDropTargetFolder {
+                    // Local folder: dropping local items on it moves/copies them inside.
                     TableRow(item)
                         .draggable(URL(fileURLWithPath: item.path))
-                        .dropDestination(for: RemoteFileRef.self) { refs in
-                            downloadRefs(refs, intoLocalDir: item)
-                        }
-                        .dropDestination(for: URL.self) { urls in
-                            moveOrCopyLocal(urls, into: item)
+                        .dropDestination(for: LocalFileDrop.self) { drops in
+                            moveOrCopyLocal(drops.map(\.url), into: item)
                         }
                         .contextMenu { contextMenu(for: item) }
                 } else if vm.isLocal {
@@ -464,14 +468,21 @@ struct FileListView: View {
         // native doubleAction (not a SwiftUI gesture, which would suppress
         // single-click selection). Purely additive: if the table can't be found,
         // selection + Return + the context menu still work.
-        .background(TableDoubleClickHandler { row in
+        .background(TableBridge(handle: tableHandle) { row in
             guard row >= 0, row < vm.displayedItems.count else { return }
             activate(vm.displayedItems[row])
         })
         .overlay(dropHighlight)
-        .onDrop(of: acceptedDropTypes, isTargeted: canAcceptDrop ? $isDropTargeted : nil) { providers in
-            handleDrop(providers: providers)
-        }
+        .onDrop(of: acceptedDropTypes, delegate: PaneDropDelegate(
+            types: acceptedDropTypes,
+            folderAt: { location in dropFolder(at: location) },
+            canDrop: { info, folder in canDrop(info, into: folder) },
+            hover: { targeted, frame in
+                if isDropTargeted != targeted { isDropTargeted = targeted }
+                if dropFolderFrame != frame { dropFolderFrame = frame }
+            },
+            perform: { providers, folder in performDrop(providers, into: folder) }
+        ))
         .onKeyPress(.return) {
             guard let item = vm.selectedFileItems.first else { return .ignored }
             activate(item)
@@ -505,9 +516,19 @@ struct FileListView: View {
         }
     }
 
+    /// Hovering a folder row outlines that row; anywhere else in the pane
+    /// outlines the whole list (the drop lands in the current directory).
     @ViewBuilder
     private var dropHighlight: some View {
-        if isDropTargeted {
+        if let frame = dropFolderFrame {
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(Color.accentColor, lineWidth: 2)
+                .background(Color.accentColor.opacity(0.12).clipShape(RoundedRectangle(cornerRadius: 5)))
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+                .clipped()
+                .allowsHitTesting(false)
+        } else if isDropTargeted {
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
                 .background(Color.accentColor.opacity(0.06).clipShape(RoundedRectangle(cornerRadius: 6)))
@@ -824,9 +845,7 @@ struct FileListView: View {
                                        message: "'\(ref.fileName)' can't be moved into itself.")
                     continue
                 }
-                let dest = folder.path.hasSuffix("/")
-                    ? "\(folder.path)\(ref.fileName)"
-                    : "\(folder.path)/\(ref.fileName)"
+                let dest = RemotePath.join(folder.path, ref.fileName)
                 if await session.client.fileExists(at: dest) {
                     appState.showError(title: "Can't Move",
                                        message: "'\(ref.fileName)' already exists in '\(folder.name)'.")
@@ -863,10 +882,11 @@ struct FileListView: View {
         Task { await vm.refresh() }
     }
 
-    /// Remote items dropped on a *local folder row* → download into that folder.
-    private func downloadRefs(_ refs: [RemoteFileRef], intoLocalDir folder: FileItem) {
+    /// Remote items dropped on the local pane → download into `destDir` (the
+    /// hovered folder, or the current directory) through the transfer queue
+    /// (progress, conflict handling, retries).
+    private func downloadRefs(_ refs: [RemoteFileRef], into destDir: URL) {
         guard let session = appState.activeSession else { return }
-        let destDir = URL(fileURLWithPath: folder.path)
         Task {
             for ref in refs {
                 if ref.isDirectory {
@@ -960,95 +980,172 @@ struct FileListView: View {
 
     // MARK: Drag & Drop
 
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        vm.isLocal
-            ? handleRemoteItemDrop(providers: providers)
-            : handleLocalFileDrop(providers: providers)
+    /// The droppable folder row under `location` (Table coordinate space) and
+    /// its frame, or nil when the drag is over a file row or empty space.
+    private func dropFolder(at location: CGPoint) -> (folder: FileItem, frame: CGRect?)? {
+        guard let row = tableHandle.row(atTablePoint: location),
+              let folder = FileItem.dropFolder(atRow: row, in: vm.displayedItems) else { return nil }
+        return (folder, tableHandle.frame(ofRow: row))
     }
 
-    /// Drop on the LOCAL pane: an in-app drag from the remote pane. Decodes the
-    /// remote-item payload and routes the download through the transfer queue
-    /// (progress, conflict handling, retries) into the current local folder.
-    private func handleRemoteItemDrop(providers: [NSItemProvider]) -> Bool {
-        guard let session = appState.activeSession else { return false }
+    /// Whether dropping `info` here would do anything (highlight + accept). A
+    /// drag from the remote pane also exposes a file promise, so the
+    /// remote-item payload is checked first and wins. Same-pane drags (local
+    /// files on the local pane, remote items on the remote pane) are handled
+    /// by the folder rows' own `dropDestination` and never arrive here, but
+    /// the rules below stay complete in case that changes.
+    private func canDrop(_ info: DropInfo, into folder: FileItem?) -> Bool {
+        let remoteItems = info.hasItemsConforming(to: [.teleportRemoteItem])
+        let localFiles  = !remoteItems && info.hasItemsConforming(to: [.fileURL])
+        if vm.isLocal {
+            // Remote items download into the folder or the current directory;
+            // local files only ever move/copy into a folder.
+            if remoteItems { return appState.activeSession != nil }
+            if localFiles  { return folder != nil }
+        } else {
+            // Remote items move server-side into a folder only; local files
+            // upload into the folder or the current directory.
+            guard remoteSession != nil else { return false }
+            if remoteItems { return folder != nil }
+            if localFiles  { return true }
+        }
+        return false
+    }
+
+    /// Route a completed drop. `folder` is the hovered folder row, if any.
+    private func performDrop(_ providers: [NSItemProvider], into folder: FileItem?) -> Bool {
+        let remoteID = UTType.teleportRemoteItem.identifier
+        let remote = providers.filter { $0.hasItemConformingToTypeIdentifier(remoteID) }
+        // A remote drag's file promise is never honoured as a local file: that
+        // would download-then-reupload the item onto itself.
+        let local = remote.isEmpty
+            ? providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+            : []
+
+        if vm.isLocal {
+            if !remote.isEmpty {
+                let dir = URL(fileURLWithPath: folder?.path ?? vm.currentPath)
+                Task { downloadRefs(await loadRemoteRefs(remote), into: dir) }
+                return true
+            }
+            if let folder, !local.isEmpty {
+                Task { moveOrCopyLocal(await loadFileURLs(local), into: folder) }
+                return true
+            }
+        } else {
+            if !remote.isEmpty {
+                guard let folder else { return false }
+                Task { moveRemote(await loadRemoteRefs(remote), into: folder) }
+                return true
+            }
+            if !local.isEmpty {
+                let parent = folder?.path ?? vm.currentPath
+                Task { uploadLocalURLs(await loadFileURLs(local), toRemoteParent: parent) }
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Decode the in-app remote-item payloads carried by `providers`.
+    private func loadRemoteRefs(_ providers: [NSItemProvider]) async -> [RemoteFileRef] {
         let typeID = UTType.teleportRemoteItem.identifier
-        var accepted = false
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(typeID) {
-            accepted = true
-            provider.loadDataRepresentation(forTypeIdentifier: typeID) { data, _ in
-                guard let data,
-                      let ref = try? JSONDecoder().decode(RemoteFileRef.self, from: data) else { return }
-                Task { @MainActor in
-                    let destDir = URL(fileURLWithPath: vm.currentPath)
-                    if ref.isDirectory {
-                        do {
-                            try await appState.transferQueue.enqueueFolderDownload(
-                                connection: session.connection,
-                                client: session.client,
-                                remotePath: ref.remotePath,
-                                folderName: ref.fileName,
-                                into: destDir
-                            )
-                        } catch { appState.showError(error) }
-                    } else {
-                        appState.transferQueue.enqueue(
-                            connection: session.connection,
-                            direction: .download,
-                            localURL: destDir.appending(component: ref.fileName),
-                            remotePath: ref.remotePath
-                        )
-                    }
+        var refs: [RemoteFileRef] = []
+        for provider in providers {
+            let data: Data? = await withCheckedContinuation { cont in
+                provider.loadDataRepresentation(forTypeIdentifier: typeID) { data, _ in
+                    cont.resume(returning: data)
                 }
             }
+            if let data, let ref = try? JSONDecoder().decode(RemoteFileRef.self, from: data) {
+                refs.append(ref)
+            }
         }
-        return accepted
+        return refs
     }
 
-    /// Drop on the REMOTE pane: local file/folder URLs from Finder or the local
-    /// pane. Folders are uploaded recursively.
-    private func handleLocalFileDrop(providers: [NSItemProvider]) -> Bool {
-        guard let session = remoteSession else { return false }
+    /// Resolve the file URLs carried by `providers` (Finder or the local pane).
+    private func loadFileURLs(_ providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
         for provider in providers {
-            // Drags that originate from the remote pane also expose a file
-            // promise; honouring it would download-then-reupload the file onto
-            // itself. Skip anything carrying our internal payload.
-            guard !provider.hasItemConformingToTypeIdentifier(UTType.teleportRemoteItem.identifier) else {
-                continue
-            }
-            // The provider callback runs on an arbitrary thread. Don't read
-            // `vm.currentPath` (MainActor-isolated) inside it — hop back to
-            // MainActor before using it.
-            provider.loadItem(forTypeIdentifier: "public.file-url") { item, _ in
-                guard let data = item as? Data,
-                      let url  = URL(dataRepresentation: data, relativeTo: nil) else { return }
-                var isDir: ObjCBool = false
-                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-                let isDirectory = isDir.boolValue
-                Task { @MainActor in
-                    if isDirectory {
-                        do {
-                            try await appState.transferQueue.enqueueFolderUpload(
-                                connection: session.connection,
-                                client: session.client,
-                                folderURL: url,
-                                remoteParent: vm.currentPath
-                            )
-                        } catch { appState.showError(error) }
-                    } else {
-                        let dest = vm.currentPath.hasSuffix("/")
-                            ? "\(vm.currentPath)\(url.lastPathComponent)"
-                            : "\(vm.currentPath)/\(url.lastPathComponent)"
-                        appState.transferQueue.enqueue(
-                            connection: session.connection,
-                            direction: .upload,
-                            localURL: url,
-                            remotePath: dest
-                        )
-                    }
+            let url: URL? = await withCheckedContinuation { cont in
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                    guard let data = item as? Data else { return cont.resume(returning: nil) }
+                    cont.resume(returning: URL(dataRepresentation: data, relativeTo: nil))
                 }
             }
+            if let url { urls.append(url) }
         }
-        return true
+        return urls
+    }
+
+    /// Upload local files/folders into `remoteParent` through the transfer
+    /// queue. Folders are uploaded recursively.
+    private func uploadLocalURLs(_ urls: [URL], toRemoteParent remoteParent: String) {
+        guard let session = remoteSession else { return }
+        for url in urls {
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            if isDir.boolValue {
+                Task {
+                    do {
+                        try await appState.transferQueue.enqueueFolderUpload(
+                            connection: session.connection,
+                            client: session.client,
+                            folderURL: url,
+                            remoteParent: remoteParent
+                        )
+                    } catch { appState.showError(error) }
+                }
+            } else {
+                appState.transferQueue.enqueue(
+                    connection: session.connection,
+                    direction: .upload,
+                    localURL: url,
+                    remotePath: RemotePath.join(remoteParent, url.lastPathComponent)
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Pane Drop Delegate
+
+/// Pane-wide drop handling for a file list: drags from the other pane or from
+/// Finder. Tracks the folder row under the drag (via `TableHandle`) so the
+/// view can highlight it and route the drop into it, and falls back to the
+/// pane's current directory elsewhere. Drags that originate in the same table
+/// don't reach a pane-level drop handler; those go through the folder rows'
+/// `dropDestination` instead.
+struct PaneDropDelegate: DropDelegate {
+    let types: [UTType]
+    let folderAt: (CGPoint) -> (folder: FileItem, frame: CGRect?)?
+    let canDrop: (DropInfo, FileItem?) -> Bool
+    let hover: (_ targeted: Bool, _ folderFrame: CGRect?) -> Void
+    let perform: ([NSItemProvider], FileItem?) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: types) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let target = folderAt(info.location)
+        guard canDrop(info, target?.folder) else {
+            hover(false, nil)
+            return DropProposal(operation: .cancel)
+        }
+        hover(true, target?.frame)
+        // Always propose `.copy`: SwiftUI's `draggable` sources only permit
+        // copy, so proposing `.move` makes AppKit refuse the drop outright —
+        // even for drops that end up as server-side or same-volume moves.
+        return DropProposal(operation: .copy)
+    }
+
+    func dropExited(info: DropInfo) { hover(false, nil) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        hover(false, nil)
+        let target = folderAt(info.location)
+        guard canDrop(info, target?.folder) else { return false }
+        return perform(info.itemProviders(for: types), target?.folder)
     }
 }
 
@@ -1072,23 +1169,52 @@ final class QuickLookCoordinator: NSObject, QLPreviewPanelDataSource, QLPreviewP
     }
 }
 
-// MARK: - Table Double-Click
+// MARK: - Table Bridge
 
-/// Adds double-click-to-open to a SwiftUI `Table` by wiring the backing
-/// `NSTableView`'s native `doubleAction`. SwiftUI provides no double-click hook,
-/// and a SwiftUI tap gesture on rows would suppress single-click selection — so
-/// we reach the AppKit table directly. The host view is click-transparent
-/// (`hitTest` → nil), so it never interferes with selection or dragging.
+/// Weak access to the AppKit table behind a SwiftUI `Table`, for the things
+/// SwiftUI won't expose: which row sits under a point (drop targeting) and
+/// where that row is drawn (drop highlight). Only ever touched on the main
+/// thread (AppKit views and SwiftUI drop callbacks).
+final class TableHandle {
+    weak var tableView: NSTableView?
+    /// The bridge's host view: shares the Table's frame and is flipped, so its
+    /// coordinates match SwiftUI's (top-left origin) — what `DropInfo.location`
+    /// reports.
+    weak var anchor: NSView?
+
+    /// The row under `point` (Table coordinate space), or nil for none.
+    func row(atTablePoint point: CGPoint) -> Int? {
+        guard let anchor, let tableView else { return nil }
+        let row = tableView.row(at: tableView.convert(point, from: anchor))
+        return row >= 0 ? row : nil
+    }
+
+    /// Frame of `row` in the Table coordinate space.
+    func frame(ofRow row: Int) -> CGRect? {
+        guard let anchor, let tableView else { return nil }
+        return anchor.convert(tableView.rect(ofRow: row), from: tableView)
+    }
+}
+
+/// Reaches the backing `NSTableView` of a SwiftUI `Table` to add what SwiftUI
+/// lacks: double-click-to-open (via the native `doubleAction`; a SwiftUI tap
+/// gesture on rows would suppress single-click selection) and row geometry for
+/// drop targeting (published through `handle`). The host view is
+/// click-transparent (`hitTest` → nil), so it never interferes with selection
+/// or dragging.
 ///
 /// `onDoubleClick` receives the clicked row index (matching the data order).
-struct TableDoubleClickHandler: NSViewRepresentable {
+struct TableBridge: NSViewRepresentable {
+    /// Receives the table for drop targeting; nil when only double-click is needed.
+    var handle: TableHandle? = nil
     let onDoubleClick: (Int) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(onDoubleClick: onDoubleClick) }
+    func makeCoordinator() -> Coordinator { Coordinator(handle: handle, onDoubleClick: onDoubleClick) }
 
     func makeNSView(context: Context) -> NSView {
         let view = PassthroughView()
         context.coordinator.anchor = view
+        handle?.anchor = view
         return view
     }
 
@@ -1099,11 +1225,15 @@ struct TableDoubleClickHandler: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject {
+        let handle: TableHandle?
         var onDoubleClick: (Int) -> Void
         weak var anchor: NSView?
         weak var tableView: NSTableView?
 
-        init(onDoubleClick: @escaping (Int) -> Void) { self.onDoubleClick = onDoubleClick }
+        init(handle: TableHandle?, onDoubleClick: @escaping (Int) -> Void) {
+            self.handle = handle
+            self.onDoubleClick = onDoubleClick
+        }
 
         func connectIfNeeded() {
             if let tv = tableView {
@@ -1133,6 +1263,7 @@ struct TableDoubleClickHandler: NSViewRepresentable {
 
             guard let tv = best?.table else { return }
             tableView = tv
+            handle?.tableView = tv
             tv.target = self
             tv.doubleAction = #selector(handleDoubleClick)
         }
@@ -1143,8 +1274,10 @@ struct TableDoubleClickHandler: NSViewRepresentable {
         }
     }
 
-    /// Transparent to hit-testing so it never captures clicks meant for the table.
+    /// Transparent to hit-testing so it never captures clicks meant for the
+    /// table. Flipped so its coordinates match SwiftUI's (see `TableHandle`).
     final class PassthroughView: NSView {
+        override var isFlipped: Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }

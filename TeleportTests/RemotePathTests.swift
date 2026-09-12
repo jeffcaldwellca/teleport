@@ -102,4 +102,18 @@ final class RemotePathTests: XCTestCase {
         let dest = base.appending(component: "..").appending(component: "Documents")
         XCTAssertFalse(RemotePath.isContained(dest, in: base))
     }
+
+    // MARK: - join
+
+    func test_join_insertsSeparator() {
+        XCTAssertEqual(RemotePath.join("/upload", "file.txt"), "/upload/file.txt")
+    }
+
+    func test_join_doesNotDoubleSeparatorAtRoot() {
+        XCTAssertEqual(RemotePath.join("/", "file.txt"), "/file.txt")
+    }
+
+    func test_join_doesNotDoubleSeparatorWithTrailingSlash() {
+        XCTAssertEqual(RemotePath.join("/upload/", "file.txt"), "/upload/file.txt")
+    }
 }

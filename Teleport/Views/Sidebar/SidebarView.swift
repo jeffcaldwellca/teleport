@@ -49,7 +49,7 @@ struct SidebarView: View {
         // clicks in the empty trailing area and silently broke click-to-select
         // there. With no gesture attached, the List's own full-width selection
         // works again; the double-click connects the row the click just selected.
-        .background(TableDoubleClickHandler { _ in
+        .background(TableBridge { _ in
             guard let conn = appState.selectedConnection else { return }
             Task { await appState.openSession(for: conn) }
         })
