@@ -41,6 +41,12 @@ public enum RemotePath {
         return name
     }
 
+    /// Append `name` to a remote directory path with exactly one separator,
+    /// whether or not `parent` already ends in one (`/` root included).
+    public static func join(_ parent: String, _ name: String) -> String {
+        parent.hasSuffix("/") ? "\(parent)\(name)" : "\(parent)/\(name)"
+    }
+
     /// Confirm a destination URL stays inside `base`, defeating an attacker that
     /// got `..` through earlier sanitization (defense in depth).
     public static func isContained(_ destination: URL, in base: URL) -> Bool {

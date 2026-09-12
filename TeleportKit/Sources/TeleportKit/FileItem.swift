@@ -87,3 +87,17 @@ public struct FileItem: Identifiable, Hashable {
         FileItem(name: name, path: "/\(name)", isDirectory: isDirectory)
     }
 }
+
+public extension FileItem {
+    /// Whether a drag can be dropped *into* this item. Symlinks are excluded:
+    /// listings report them with lstat semantics, so a link to a directory is
+    /// indistinguishable from a link to a file.
+    var isDropTargetFolder: Bool { isDirectory && !isSymlink }
+
+    /// The folder at `row` in `items`, or nil when the row is out of range or
+    /// isn't a droppable folder. `row` is a table row index (-1 = no row).
+    static func dropFolder(atRow row: Int, in items: [FileItem]) -> FileItem? {
+        guard items.indices.contains(row), items[row].isDropTargetFolder else { return nil }
+        return items[row]
+    }
+}
