@@ -304,6 +304,25 @@ final class TransferIntegrationTests: XCTestCase {
                        "Remote mtime must round-trip (SETSTAT then stat)")
     }
 
+    /// A first-seen host key must be put to the user before any credentials
+    /// leave the machine. With a wrong password and a declined key, an
+    /// authentication failure would prove the password was sent first.
+    func test_sftp_unknownHostKey_isConfirmedBeforeAuthenticating() async throws {
+        try requireServers()
+        let client = SFTPClient(
+            connection: sftpConnection(),
+            password: "definitely-not-the-password",
+            hostKeyStore: SSHHostKeyStore(storeURL: nil),
+            onUnknownHostKey: { _, _, _ in false }
+        )
+        do {
+            try await client.connect()
+            XCTFail("Connecting with a declined host key should throw")
+        } catch RemoteClientError.hostKeyUntrusted {
+            // expected: asked (and declined) before authentication was attempted
+        }
+    }
+
     /// Cancelling a download that was overwriting an existing file must leave
     /// that file exactly as it was, and clean up the staged partial.
     @MainActor
