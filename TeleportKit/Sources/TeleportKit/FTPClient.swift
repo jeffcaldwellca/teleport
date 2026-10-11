@@ -103,6 +103,9 @@ private final class FTPSocket {
 
         var enable: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &enable, socklen_t(MemoryLayout.size(ofValue: enable)))
+        // A write to a connection the server already closed must fail with
+        // EPIPE, not raise SIGPIPE — whose default action kills the process.
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enable, socklen_t(MemoryLayout.size(ofValue: enable)))
 
         // Bound blocking reads so the transfer loop can check cancellation and
         // enforce an idle deadline. Sends stay blocking (cancellation is checked
@@ -685,7 +688,16 @@ public actor FTPClient: RemoteClient {
     // MARK: - Keep-Alive
 
     public func keepAlive() async {
-        _ = try? sendCommand("NOOP")
+        do {
+            try sendCommand("NOOP")
+        } catch {
+            // The session is gone. Drop the socket so the next operation
+            // reports "not connected" (and reconnects) straight away instead
+            // of writing to, and waiting on, a dead connection.
+            socket?.close()
+            socket = nil
+            tlsActive = false
+        }
     }
 
     // MARK: - File Existence Check
