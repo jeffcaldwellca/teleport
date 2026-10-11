@@ -256,19 +256,15 @@ public actor SFTPClient: RemoteClient {
         let attrs = try await sftp.getAttributes(at: remotePath)
         let total = attrs.size.map(Int64.init) ?? 0
 
-        // Resume from the partial local file when asked and it's smaller than
-        // the source; otherwise start clean.
-        var startOffset: UInt64 = 0
-        if resume,
-           let existing = (try? FileManager.default.attributesOfItem(atPath: localURL.path)[.size]) as? Int64,
-           existing > 0, total > 0, existing < total {
-            startOffset = UInt64(existing)
-        }
+        // Resume from staged bytes when asked and they're fewer than the
+        // source; otherwise start clean.
+        let startOffset = UInt64(DownloadStaging.resumeOffset(for: localURL, resume: resume, total: total))
 
         let file = try await sftp.openFile(filePath: remotePath, flags: .read)
         do {
-            // O_NOFOLLOW; don't truncate when resuming so prior bytes survive.
-            let fh = try Self.openForWriting(at: localURL, truncate: startOffset == 0)
+            // Written to a staging file (see DownloadStaging); not truncated
+            // when resuming so prior bytes survive.
+            let fh = try DownloadStaging.openPartial(for: localURL, truncate: startOffset == 0)
             defer { try? fh.close() }
             if startOffset > 0 { try fh.seek(toOffset: startOffset) }
 
@@ -294,27 +290,13 @@ public actor SFTPClient: RemoteClient {
                     "Incomplete download: received \(offset) of \(total) bytes"
                 )
             }
+            try fh.close()
+            try DownloadStaging.commit(to: localURL)
         } catch {
             try? await file.close()
+            DownloadStaging.discardEmptyPartial(for: localURL)
             throw error
         }
-    }
-
-    /// Open a destination file for writing, refusing to follow symlinks.
-    /// Defends against an attacker pre-placing a symlink at a predicted path.
-    private static func openForWriting(at url: URL, truncate: Bool = true) throws -> FileHandle {
-        var flags: Int32 = O_WRONLY | O_CREAT | O_NOFOLLOW
-        if truncate { flags |= O_TRUNC }
-        let fd = url.path.withCString { path in
-            Darwin.open(path, flags, 0o644)
-        }
-        guard fd >= 0 else {
-            let err = errno
-            throw RemoteClientError.transferFailed(
-                "Could not open destination: \(String(cString: strerror(err)))"
-            )
-        }
-        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 
     private static let transferChunkSize: Int = 32 * 1024
