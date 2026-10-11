@@ -493,11 +493,11 @@ struct FileListView: View {
             return .handled
         }
         .confirmationDialog(
-            "Delete \(itemsToDelete.count) item\(itemsToDelete.count == 1 ? "" : "s")?",
+            "\(vm.isLocal ? "Move" : "Delete") \(itemsToDelete.count) item\(itemsToDelete.count == 1 ? "" : "s")\(vm.isLocal ? " to the Trash" : "")?",
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) {
+            Button(vm.isLocal ? "Move to Trash" : "Delete", role: .destructive) {
                 Task {
                     do { try await vm.delete(items: itemsToDelete) }
                     catch { appState.showError(error) }
@@ -505,9 +505,14 @@ struct FileListView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(itemsToDelete.contains(where: \.isDirectory)
-                 ? "Folders are deleted together with everything inside them. This action cannot be undone."
-                 : "This action cannot be undone.")
+            // Local deletes go to the Trash; remote deletes are permanent.
+            if vm.isLocal {
+                Text("You can restore items from the Trash.")
+            } else {
+                Text(itemsToDelete.contains(where: \.isDirectory)
+                     ? "Folders are deleted together with everything inside them. This action cannot be undone."
+                     : "This action cannot be undone.")
+            }
         }
         .sheet(item: $permissionsItem) { item in
             if let session = remoteSession {

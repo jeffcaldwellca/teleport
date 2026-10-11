@@ -41,8 +41,12 @@ final class LocalFileService {
         try fm.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
-    func delete(at url: URL) throws {
-        try fm.removeItem(at: url)
+    /// Moves the item to the Trash (recoverable), returning where it landed.
+    @discardableResult
+    func delete(at url: URL) throws -> URL? {
+        var trashed: NSURL?
+        try fm.trashItem(at: url, resultingItemURL: &trashed)
+        return trashed as URL?
     }
 
     func rename(from: URL, to: URL) throws {
