@@ -515,7 +515,15 @@ final class TransferQueueViewModel {
             task.status = .paused
         } else {
             task.status = .cancelled
+            discardPartial(task)
         }
+    }
+
+    /// A download nobody will resume shouldn't leave its staged ".part" file
+    /// behind. Paused and failed downloads keep theirs for resume / retry.
+    private func discardPartial(_ task: TransferTask) {
+        guard task.direction == .download else { return }
+        DownloadStaging.discardPartial(for: task.effectiveLocalURL)
     }
 
     /// Pause a queued or in-flight transfer, keeping partial bytes for resume.
@@ -545,18 +553,32 @@ final class TransferQueueViewModel {
         if pendingConflict?.id == task.id {
             resolveConflictInternal(.skip)
         }
-        transferHandles[task.id]?.cancel()   // interrupt an in-flight transfer
+        // An in-flight transfer drops its partial file once it has actually
+        // stopped (settleInterruption); a parked one has nothing running.
+        if let handle = transferHandles[task.id] {
+            handle.cancel()
+        } else if !task.status.isFinal {
+            discardPartial(task)
+        }
         task.status = .cancelled
     }
 
     func cancelAll() {
         if pendingConflict != nil { resolveConflictInternal(.skip) }
         transferHandles.values.forEach { $0.cancel() }
-        tasks.filter { !$0.status.isFinal }.forEach { $0.status = .cancelled }
+        for task in tasks where !task.status.isFinal {
+            if transferHandles[task.id] == nil { discardPartial(task) }
+            task.status = .cancelled
+        }
         batchResolution = nil
     }
 
     func clearCompleted() {
+        // A failed download kept its partial file for Retry; clearing the row
+        // gives that up.
+        for task in tasks {
+            if case .failed = task.status { discardPartial(task) }
+        }
         tasks.removeAll { $0.status.isFinal }
     }
 
@@ -584,7 +606,9 @@ final class TransferQueueViewModel {
         task.bytesTransferred    = 0
         task.progress            = 0
         task.pauseRequested      = false
-        task.resumeOnNextAttempt = false
+        // A failed download kept its staged bytes — continue from them. The
+        // conflict was already settled on the first run.
+        task.resumeOnNextAttempt = task.direction == .download
         task.status              = .queued
     }
 

@@ -15,7 +15,7 @@ struct GetCommand: AsyncParsableCommand {
     @Flag(help: "Download a folder recursively.")
     var recursive = false
 
-    @Flag(help: "Resume an interrupted download from the local file's current size.")
+    @Flag(help: "Resume an interrupted download from its partial (.part) file.")
     var resume = false
 
     @Option(help: "Conflict handling when the destination already exists: overwrite, skip, or ifNewer.")
@@ -60,6 +60,13 @@ struct GetCommand: AsyncParsableCommand {
             return
         }
         try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Downloads are staged in a ".part" file. A partial file sitting at
+        // the destination itself (from another tool, or an older tport) is
+        // what --resume was asked to continue, so adopt it as the staged copy.
+        let staged = DownloadStaging.partialURL(for: localURL)
+        if resume, exists, !FileManager.default.fileExists(atPath: staged.path) {
+            try FileManager.default.moveItem(at: localURL, to: staged)
+        }
         let printer = ProgressPrinter(label: localURL.lastPathComponent)
         try await client.download(remotePath: remotePath, to: localURL, resume: resume) { bytes, total in
             printer.update(bytes: bytes, total: total)

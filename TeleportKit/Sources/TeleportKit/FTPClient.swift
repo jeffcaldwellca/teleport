@@ -508,6 +508,7 @@ public actor FTPClient: RemoteClient {
             await xfer.disconnect()
         } catch {
             await xfer.disconnect()
+            DownloadStaging.discardEmptyPartial(for: localURL)
             throw error
         }
     }
@@ -527,19 +528,18 @@ public actor FTPClient: RemoteClient {
         let dataSock = try openDataConnection()
         defer { dataSock.close() }
 
-        // Resume from partial local bytes when asked and the server accepts REST.
+        // Resume from staged bytes when asked and the server accepts REST.
         // REST is sent after PASV/EPSV, immediately before RETR — some servers
         // reset the restart marker on intervening commands.
-        var startOffset: Int64 = 0
-        if resume,
-           let existing = (try? FileManager.default.attributesOfItem(atPath: localURL.path)[.size]) as? Int64,
-           existing > 0, totalBytes > 0, existing < totalBytes {
-            let rest = try sendCommand("REST \(existing)")
-            if rest.code == 350 { startOffset = existing }   // else fall back to full
+        var startOffset = DownloadStaging.resumeOffset(for: localURL, resume: resume, total: totalBytes)
+        if startOffset > 0 {
+            let rest = try sendCommand("REST \(startOffset)")
+            if rest.code != 350 { startOffset = 0 }   // fall back to full
         }
 
-        // O_NOFOLLOW; only truncate on a clean (non-resume) start.
-        let fh = try Self.openForWriting(at: localURL, truncate: startOffset == 0)
+        // Written to a staging file (see DownloadStaging); only truncated on
+        // a clean (non-resume) start.
+        let fh = try DownloadStaging.openPartial(for: localURL, truncate: startOffset == 0)
         defer { try? fh.close() }
         if startOffset > 0 { try fh.seek(toOffset: UInt64(startOffset)) }
 
@@ -573,23 +573,8 @@ public actor FTPClient: RemoteClient {
                 "Incomplete download: received \(received) of \(totalBytes) bytes"
             )
         }
-    }
-
-    /// Open a destination file for writing, refusing to follow symlinks.
-    /// Defends against an attacker pre-placing a symlink at a predicted path.
-    private static func openForWriting(at url: URL, truncate: Bool = true) throws -> FileHandle {
-        var flags: Int32 = O_WRONLY | O_CREAT | O_NOFOLLOW
-        if truncate { flags |= O_TRUNC }
-        let fd = url.path.withCString { path in
-            Darwin.open(path, flags, 0o644)
-        }
-        guard fd >= 0 else {
-            let err = errno
-            throw FTPError.transferInterrupted(
-                "Could not open destination: \(String(cString: strerror(err)))"
-            )
-        }
-        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        try fh.close()
+        try DownloadStaging.commit(to: localURL)
     }
 
     // MARK: - Upload

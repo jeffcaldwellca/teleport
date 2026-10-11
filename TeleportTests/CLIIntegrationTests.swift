@@ -100,7 +100,11 @@ final class CLIIntegrationTests: XCTestCase {
         try data.write(to: original)
 
         let remotePath = "/upload/tport-it-resume-\(UUID().uuidString).bin"
-        let put = try run(["put", original.path, "sftp://testuser:testpass@127.0.0.1:2222\(remotePath)", "--accept-new-hostkey"])
+        // Isolated trust store: the user's real ~/.teleport/known_hosts.json may
+        // hold a key from an earlier test container on this same port.
+        let knownHosts = dir.appending(component: "known_hosts.json").path
+        let put = try run(["put", original.path, "sftp://testuser:testpass@127.0.0.1:2222\(remotePath)",
+                           "--accept-new-hostkey", "--known-hosts", knownHosts])
         XCTAssertEqual(put.exitCode, 0, put.stderr)
 
         let downloaded = dir.appending(component: "downloaded.bin")
@@ -109,6 +113,7 @@ final class CLIIntegrationTests: XCTestCase {
         let get = try run([
             "get", "sftp://testuser:testpass@127.0.0.1:2222\(remotePath)", downloaded.path,
             "--resume", "--accept-new-hostkey", "--on-conflict", "overwrite",
+            "--known-hosts", knownHosts,
         ])
         XCTAssertEqual(get.exitCode, 0, get.stderr)
         XCTAssertEqual(try Data(contentsOf: downloaded), data)

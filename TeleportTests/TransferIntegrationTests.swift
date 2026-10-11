@@ -133,13 +133,14 @@ final class TransferIntegrationTests: XCTestCase {
 
         try await client.upload(from: original, remotePath: remotePath, resume: false) { _, _ in }
 
-        // Simulate an interrupted download: a partial local file with the
+        // Simulate an interrupted download: a staged partial file with the
         // first 300k bytes, then resume.
-        let partial = dir.appending(component: "resumed.bin")
-        try Data(contentsOf: original).prefix(300_000).write(to: partial)
+        let resumed = dir.appending(component: "resumed.bin")
+        try Data(contentsOf: original).prefix(300_000)
+            .write(to: DownloadStaging.partialURL(for: resumed))
 
-        try await client.download(remotePath: remotePath, to: partial, resume: true) { _, _ in }
-        XCTAssertEqual(try sha256(original), try sha256(partial),
+        try await client.download(remotePath: remotePath, to: resumed, resume: true) { _, _ in }
+        XCTAssertEqual(try sha256(original), try sha256(resumed),
                        "Resumed download must reproduce the exact original bytes")
     }
 
@@ -248,11 +249,12 @@ final class TransferIntegrationTests: XCTestCase {
 
         try await client.upload(from: original, remotePath: remotePath, resume: false) { _, _ in }
 
-        let partial = dir.appending(component: "resumed.bin")
-        try Data(contentsOf: original).prefix(300_000).write(to: partial)
+        let resumed = dir.appending(component: "resumed.bin")
+        try Data(contentsOf: original).prefix(300_000)
+            .write(to: DownloadStaging.partialURL(for: resumed))
 
-        try await client.download(remotePath: remotePath, to: partial, resume: true) { _, _ in }
-        XCTAssertEqual(try sha256(original), try sha256(partial),
+        try await client.download(remotePath: remotePath, to: resumed, resume: true) { _, _ in }
+        XCTAssertEqual(try sha256(original), try sha256(resumed),
                        "Resumed download must reproduce the exact original bytes")
     }
 
@@ -302,6 +304,41 @@ final class TransferIntegrationTests: XCTestCase {
                        "Remote mtime must round-trip (SETSTAT then stat)")
     }
 
+    /// Cancelling a download that was overwriting an existing file must leave
+    /// that file exactly as it was, and clean up the staged partial.
+    @MainActor
+    func test_queue_cancelledOverwrite_sftp_keepsExistingFileAndRemovesPartial() async throws {
+        try requireServers()
+        let accept = autoAcceptHostKeys()
+        defer { accept.cancel() }
+
+        let dir = try makeTempDir()
+        let original = try writeRandomFile(in: dir, name: "original.bin", size: 12_000_000)
+        let remotePath = "/upload/cancel-\(UUID().uuidString).bin"
+
+        let client = sftpTestClient()
+        try await client.connect()
+        try await client.upload(from: original, remotePath: remotePath, resume: false) { _, _ in }
+        await client.disconnect()
+
+        let dest = dir.appending(component: "existing.bin")
+        try Data("existing contents".utf8).write(to: dest)
+
+        let queue = TransferQueueViewModel(passwordProvider: { _ in Self.password })
+        let task = try XCTUnwrap(queue.enqueue(
+            connection: sftpConnection(), direction: .download,
+            localURL: dest, remotePath: remotePath, conflictBehavior: .overwrite
+        ))
+        try await waitUntil(timeout: 30, "first bytes") { task.bytesTransferred > 200_000 }
+        queue.cancel(task)
+
+        let partial = DownloadStaging.partialURL(for: dest)
+        try await waitUntil(timeout: 30, "partial removed") {
+            !FileManager.default.fileExists(atPath: partial.path)
+        }
+        XCTAssertEqual(try String(contentsOf: dest, encoding: .utf8), "existing contents")
+    }
+
     /// End-to-end queue behaviour: pause an in-flight download, verify partial
     /// data is kept, resume, and verify the final file is byte-identical.
     @MainActor
@@ -334,7 +371,8 @@ final class TransferIntegrationTests: XCTestCase {
         queue.pause(task)
         try await waitUntil(timeout: 30, "paused") { task.status == .paused }
 
-        let partialSize = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size]) as? Int64 ?? 0
+        let partialSize = (try? FileManager.default.attributesOfItem(
+            atPath: DownloadStaging.partialURL(for: dest).path)[.size]) as? Int64 ?? 0
         XCTAssertGreaterThan(partialSize, 0, "Pause must keep partial bytes for resume")
         XCTAssertLessThan(partialSize, 12_000_000, "Transfer should not have finished before pause")
 
