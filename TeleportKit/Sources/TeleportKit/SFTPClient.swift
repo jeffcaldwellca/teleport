@@ -30,7 +30,8 @@ public actor SFTPClient: RemoteClient {
     ///     a plain `Data(contentsOf:)`. The GUI app supplies a closure that
     ///     tries a sandbox-scoped bookmark first, falling back to a direct read.
     ///   - onUnknownHostKey: asked to trust a host key seen for the first time
-    ///     (host, port, fingerprint) → trust? Defaults to `false` (fail closed).
+    ///     (host, port, fingerprint) → trust? Called before any credentials are
+    ///     sent to the host. Defaults to `false` (fail closed).
     ///     The GUI app supplies a closure that shows a confirmation dialog.
     public init(
         connection: Connection,
@@ -58,11 +59,14 @@ public actor SFTPClient: RemoteClient {
 
         // Host-key validation:
         //   1. Look up any previously-trusted fingerprint for this host:port.
-        //   2. Connect with a CapturingHostKeyValidator. If `expected` is set,
-        //      mismatch fails the handshake (MITM defence).
-        //   3. On a first-use connection, ask `onUnknownHostKey` before
-        //      recording it. Declining leaves the connection closed.
-        let expected = await hostKeyStore.fingerprint(for: connection.host, port: connection.port)
+        //   2. If there is none, learn the key and get it confirmed *before*
+        //      authenticating (see `confirmUnknownHostKey`).
+        //   3. Connect pinned to that fingerprint: a mismatch fails the
+        //      handshake (MITM defence) before any credentials are sent.
+        var expected = await hostKeyStore.fingerprint(for: connection.host, port: connection.port)
+        if expected == nil {
+            expected = try await confirmUnknownHostKey()
+        }
         let validator = CapturingHostKeyValidator(expected: expected)
 
         let client: SSHClient
@@ -84,31 +88,53 @@ public actor SFTPClient: RemoteClient {
         }
         ssh = client
 
-        // First-use confirmation (no expected fingerprint in store).
-        if expected == nil, let captured = validator.captured {
-            let trusted = await onUnknownHostKey(connection.host, connection.port, captured)
-            guard trusted else {
-                try? await client.close()
-                ssh = nil
-                throw RemoteClientError.hostKeyUntrusted(
-                    host: connection.host, port: connection.port, fingerprint: captured
-                )
-            }
-            do {
-                try await hostKeyStore.record(
-                    host: connection.host, port: connection.port, fingerprint: captured
-                )
-            } catch {
-                // Trust granted but disk-write failed — connection is already up,
-                // continue but warn via the next connect attempt.
-            }
-        }
-
         do {
             sftp = try await client.openSFTP()
         } catch {
             throw translateConnectFailure(error)
         }
+    }
+
+    /// First contact with a host: learn its key and ask `onUnknownHostKey`
+    /// whether to trust it, returning the fingerprint to pin.
+    ///
+    /// The key is captured by a throwaway connection whose validator refuses
+    /// the handshake, so it ends during key exchange — before user
+    /// authentication — and carries no real credentials. Asking only after a
+    /// full connect would hand the password to a server nobody has vouched for.
+    private func confirmUnknownHostKey() async throws -> String {
+        let probe = CapturingHostKeyValidator(expected: nil, rejectUnknown: true)
+        do {
+            let client = try await SSHClient.connect(
+                host: connection.host,
+                port: connection.port,
+                authenticationMethod: .passwordBased(username: connection.username, password: ""),
+                hostKeyValidator: .custom(probe),
+                reconnect: .never
+            )
+            try? await client.close()   // not expected: the probe refuses every key
+        } catch {
+            // Refusing the key is the expected outcome; anything that failed
+            // before a key was seen (DNS, TCP, …) is a real connect failure.
+            if probe.captured == nil { throw translateConnectFailure(error) }
+        }
+        guard let fingerprint = probe.captured else {
+            throw RemoteClientError.connectionFailed(
+                "\(connection.host):\(connection.port) did not present a host key"
+            )
+        }
+
+        guard await onUnknownHostKey(connection.host, connection.port, fingerprint) else {
+            throw RemoteClientError.hostKeyUntrusted(
+                host: connection.host, port: connection.port, fingerprint: fingerprint
+            )
+        }
+        // A failed disk write only costs a repeat prompt next time; this
+        // connection still pins the fingerprint the user just approved.
+        try? await hostKeyStore.record(
+            host: connection.host, port: connection.port, fingerprint: fingerprint
+        )
+        return fingerprint
     }
 
     /// Neither SwiftNIO's `NIOConnectionError` nor Citadel's error types
