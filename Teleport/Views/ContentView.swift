@@ -95,27 +95,7 @@ struct ContentView: View {
         )) { request in
             PassphraseSheet(request: request)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .newConnection)) { _ in
-            appState.editingConnection = nil
-            appState.showingConnectionEditor = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleTransferQueue)) { _ in
-            appState.transferQueue.toggleVisible()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .localRootChanged)) { note in
-            // Apply a Settings change to the open pane immediately instead of
-            // requiring a relaunch.
-            guard let path = note.userInfo?["path"] as? String else { return }
-            Task { await localBrowser.loadDirectory(path: path) }
-        }
-        .onChange(of: localBrowser.currentPath, initial: true) { _, path in
-            appState.localPanePath = path
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .switchPane)) { _ in
-            // Only meaningful when a remote pane exists.
-            guard appState.activeSession != nil else { appState.focusedPane = .local; return }
-            appState.focusedPane = (appState.focusedPane == .local) ? .remote : .local
-        }
+        .modifier(WindowCommandHandlers(localBrowser: localBrowser))
         .task {
             // Saves of remotely-edited files upload through the queue, always
             // overwriting their own remote file (no conflict dialog per save).
@@ -132,6 +112,50 @@ struct ContentView: View {
             // Seed local browser
             await localBrowser.refresh()
         }
+    }
+}
+
+// MARK: - Window Commands
+
+/// Menu commands and other app-wide notifications that act on this window.
+/// Split out of `ContentView.body` to keep that expression small enough for
+/// the type checker.
+private struct WindowCommandHandlers: ViewModifier {
+    let localBrowser: BrowserViewModel
+    @Environment(AppState.self) private var appState
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .newConnection)) { _ in
+                appState.editingConnection = nil
+                appState.showingConnectionEditor = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleTransferQueue)) { _ in
+                appState.transferQueue.toggleVisible()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .localRootChanged)) { note in
+                // Apply a Settings change to the open pane immediately instead of
+                // requiring a relaunch.
+                guard let path = note.userInfo?["path"] as? String else { return }
+                Task { await localBrowser.loadDirectory(path: path) }
+            }
+            .onChange(of: localBrowser.currentPath, initial: true) { _, path in
+                appState.localPanePath = path
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .sessionNext)) { _ in
+                appState.activateNextSession()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .sessionPrevious)) { _ in
+                appState.activatePreviousSession()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .sessionClose)) { _ in
+                Task { await appState.disconnect() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .switchPane)) { _ in
+                // Only meaningful when a remote pane exists.
+                guard appState.activeSession != nil else { appState.focusedPane = .local; return }
+                appState.focusedPane = (appState.focusedPane == .local) ? .remote : .local
+            }
     }
 }
 
@@ -162,16 +186,27 @@ private struct DockBadgeUpdater: View {
 /// scroll and selection state along with it).
 private struct RemotePane: View {
     let session: RemoteSession?
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         if let session {
-            BrowserPaneView(
-                vm: session.browser,
-                side: .remote,
-                paneTitle: session.connection.displayTitle,
-                systemImage: session.connection.connectionProtocol.systemImage,
-                remoteSession: session
-            )
+            VStack(spacing: 0) {
+                if appState.sessions.count > 1 {
+                    SessionTabBar()
+                    Divider()
+                }
+                BrowserPaneView(
+                    vm: session.browser,
+                    side: .remote,
+                    paneTitle: appState.title(for: session),
+                    systemImage: session.connection.connectionProtocol.systemImage,
+                    remoteSession: session
+                )
+                // A different session is a different pane: view-local state
+                // (an open sheet, a pending delete, a drop highlight) must
+                // not follow the user from one server to another.
+                .id(session.id)
+            }
         } else {
             NoConnectionView()
         }
