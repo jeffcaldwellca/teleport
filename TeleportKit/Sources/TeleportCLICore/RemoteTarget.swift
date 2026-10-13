@@ -11,6 +11,10 @@ public struct RemoteTarget {
     public let host: String
     public let port: Int
     public let path: String
+    /// Whether the URL named a user / port itself, as opposed to the default
+    /// having been filled in — an ssh config may supply only what's missing.
+    public let userSpecified: Bool
+    public let portSpecified: Bool
 
     public static func parse(_ raw: String) throws -> RemoteTarget {
         guard let components = URLComponents(string: raw), let scheme = components.scheme else {
@@ -32,7 +36,8 @@ public struct RemoteTarget {
         let path = components.path.isEmpty ? "/" : components.path
         return RemoteTarget(
             connectionProtocol: proto, username: username, password: components.password,
-            host: host, port: port, path: path
+            host: host, port: port, path: path,
+            userSpecified: components.user != nil, portSpecified: components.port != nil
         )
     }
 

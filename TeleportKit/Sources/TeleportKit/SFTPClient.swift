@@ -76,7 +76,7 @@ public actor SFTPClient: RemoteClient {
         // and its NIO resources.
         if ssh != nil || sftp != nil { await disconnect() }
 
-        let offers = try await buildOffers()
+        let credentials = buildCredentials()
 
         // Host-key validation:
         //   1. Look up any previously-trusted fingerprint for this host:port.
@@ -96,7 +96,14 @@ public actor SFTPClient: RemoteClient {
         // once per connection. The server closes a connection whose
         // authentication failed, so nothing is left behind.
         var connected: SSHClient?
-        for (index, offer) in offers.enumerated() {
+        for (index, credential) in credentials.enumerated() {
+            let offer: NIOSSHUserAuthenticationOffer.Offer
+            switch credential {
+            case .ready(let ready): offer = ready
+            // Only now — once anything ahead of it has been turned down — is
+            // the key file read and, if need be, its passphrase asked for.
+            case .keyFile:          offer = try await keyFileOffer()
+            }
             do {
                 connected = try await SSHClient.connect(
                     host: connection.host,
@@ -113,7 +120,7 @@ public actor SFTPClient: RemoteClient {
                 )
             } catch {
                 let failure = translateConnectFailure(error)
-                if case RemoteClientError.authenticationFailed = failure, index < offers.count - 1 {
+                if case RemoteClientError.authenticationFailed = failure, index < credentials.count - 1 {
                     continue   // rejected: try the next credential
                 }
                 throw failure
@@ -206,25 +213,31 @@ public actor SFTPClient: RemoteClient {
     /// key file or password that follows.
     private static let agentKeyLimit = 5
 
+    private enum Credential {
+        case ready(NIOSSHUserAuthenticationOffer.Offer)
+        /// The configured key file, loaded when its turn comes.
+        case keyFile
+    }
+
     /// The credentials to offer, in the order `ssh` uses: agent keys, then
     /// the key file, then the password.
-    private func buildOffers() async throws -> [NIOSSHUserAuthenticationOffer.Offer] {
-        var offers: [NIOSSHUserAuthenticationOffer.Offer] = []
+    private func buildCredentials() -> [Credential] {
+        var credentials: [Credential] = []
         if connection.useSSHAgent, let agent {
             // An agent that can't be reached contributes nothing; it doesn't
             // stop the connection.
-            offers += agent.privateKeys(limit: Self.agentKeyLimit).map { .privateKey(.init(privateKey: $0)) }
+            credentials += agent.privateKeys(limit: Self.agentKeyLimit).map { .ready(.privateKey(.init(privateKey: $0))) }
         }
         // If the user configured a key path, the password is never offered.
         // Silently falling back to password auth is dangerous — it leaks
         // whatever string is in the password field over the wire when the
         // user thought they were using a key.
         if connection.sshKeyPath.isEmpty {
-            offers.append(.password(.init(password: password)))
+            credentials.append(.ready(.password(.init(password: password))))
         } else {
-            offers.append(try await keyFileOffer())
+            credentials.append(.keyFile)
         }
-        return offers
+        return credentials
     }
 
     /// How many times a passphrase is asked for before giving up.

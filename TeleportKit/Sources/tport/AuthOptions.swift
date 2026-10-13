@@ -13,6 +13,12 @@ struct AuthOptions: ParsableArguments {
     @Option(name: .long, help: "Path to an SFTP private key (ed25519, ECDSA or RSA). A passphrase is read from TELEPORT_KEY_PASSPHRASE, or asked for when run from a terminal.")
     var identity: String?
 
+    @Option(name: .long, help: "Path to an OpenSSH client config. Defaults to ~/.ssh/config. For sftp:// URLs its Host entries supply HostName, User, Port and IdentityFile where the URL and flags don't.")
+    var sshConfig: String?
+
+    @Flag(name: .long, help: "Don't read the OpenSSH client config.")
+    var noSshConfig = false
+
     @Flag(name: .long, help: "Don't use keys from ssh-agent. (By default they are tried when neither --identity nor a password is given.)")
     var noAgent = false
 
@@ -79,6 +85,22 @@ struct AuthOptions: ParsableArguments {
         let password = try resolvePassword(for: target)
         // Like ssh: with nothing else to go on, use whatever the agent holds.
         connection.useSSHAgent = !noAgent && identity == nil && password.isEmpty
+
+        if target.connectionProtocol == .sftp, !noSshConfig {
+            // The URL's host may be an ssh config alias. The config fills in
+            // only what the URL and flags left unsaid.
+            let config = sshConfig.map { SSHConfig.load(from: URL(fileURLWithPath: $0)) } ?? SSHConfig.load()
+            let resolved = config.resolve(target.host)
+            connection.host = resolved.hostName
+            if !target.userSpecified, let user = resolved.user { connection.username = user }
+            if !target.portSpecified, let port = resolved.port { connection.port = port }
+            // A key file means the password is never sent, so a config
+            // IdentityFile must not displace a password the user supplied.
+            if identity == nil, password.isEmpty, let keyFile = resolved.identityFile,
+               FileManager.default.fileExists(atPath: keyFile) {
+                connection.sshKeyPath = keyFile
+            }
+        }
 
         switch target.connectionProtocol {
         case .sftp:
