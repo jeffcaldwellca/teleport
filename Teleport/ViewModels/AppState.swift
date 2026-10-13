@@ -57,6 +57,19 @@ final class AppState {
         connectionStore = store
         self.clientFactory = clientFactory
         transferQueue = TransferQueueViewModel(passwordProvider: { store.password(for: $0) })
+
+        // Uploads refresh the session(s) of the server they went to — which
+        // may well not be the tab on screen. (Downloads refresh the local
+        // pane, from the pane itself.)
+        NotificationCenter.default.addObserver(
+            forName: .transferCompleted, object: nil, queue: .main
+        ) { [weak self] note in
+            guard note.userInfo?["direction"] as? String == "upload",
+                  let connectionID = note.userInfo?["connectionID"] as? UUID else { return }
+            MainActor.assumeIsolated {
+                self?.sessions.filter { $0.connection.id == connectionID }.forEach { $0.scheduleRefresh() }
+            }
+        }
     }
 
     // MARK: Opening sessions
@@ -64,9 +77,10 @@ final class AppState {
     /// "Take me to this server": switch to its session if it has one,
     /// otherwise open one alongside whatever else is connected.
     func openSession(for connection: Connection) async {
-        if let existing = sessions(for: connection).first {
+        // Already looking at it (possibly its second tab): stay put.
+        let open = sessions(for: connection)
+        if let existing = open.first(where: { $0.id == activeSessionID }) ?? open.first {
             activate(existing.id)
-            selectedConnectionID = connection.id
             return
         }
         await openNewSession(for: connection)
@@ -106,8 +120,10 @@ final class AppState {
     // MARK: Switching
 
     func activate(_ id: RemoteSession.ID) {
-        guard sessions.contains(where: { $0.id == id }) else { return }
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
         setActive(id)
+        // The sidebar highlight follows a tab the user chose…
+        selectedConnectionID = session.connection.id
     }
 
     func activateNextSession() { step(by: 1) }
@@ -116,13 +132,15 @@ final class AppState {
     private func step(by offset: Int) {
         guard sessions.count > 1,
               let index = sessions.firstIndex(where: { $0.id == activeSessionID }) else { return }
-        setActive(sessions[(index + offset + sessions.count) % sessions.count].id)
+        activate(sessions[(index + offset + sessions.count) % sessions.count].id)
     }
 
+    /// …but not one they merely landed on because another tab closed or
+    /// failed to open: the highlight stays on the favourite they last picked,
+    /// ready to be reconnected.
     private func setActive(_ id: RemoteSession.ID?) {
         activeSessionID = id
         focusedPane = id == nil ? .local : .remote
-        if let session = activeSession { selectedConnectionID = session.connection.id }
     }
 
     // MARK: Closing
@@ -192,6 +210,7 @@ final class RemoteSession: Identifiable {
     var connectionError: String? = nil
 
     private var keepAliveTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
 
     init(connection: Connection, client: RemoteClient) {
         self.connection = connection
@@ -213,9 +232,22 @@ final class RemoteSession: Identifiable {
     }
 
     func disconnect() async {
+        browser.close()
+        refreshTask?.cancel()
         keepAliveTask?.cancel()
         keepAliveTask = nil
         await client.disconnect()
+    }
+
+    /// Re-list shortly after uploads land so new files appear without a
+    /// manual refresh. Debounced: a batch of completions is one reload.
+    func scheduleRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let self, !Task.isCancelled, !self.browser.isLoading else { return }
+            await self.browser.refresh()
+        }
     }
 
     /// Periodically ping the server so an idle session isn't dropped. Harmless

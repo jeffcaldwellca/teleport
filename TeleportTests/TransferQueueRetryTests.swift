@@ -234,7 +234,6 @@ final class TransferQueueRetryTests: XCTestCase {
         )
         try await queue.enqueueFolderUpload(
             connection: Connection(host: "example.invalid"),
-            client: ScriptedClient(script: script),
             folderURL: root, remoteParent: "/site"
         )
 

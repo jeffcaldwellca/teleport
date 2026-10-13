@@ -59,6 +59,16 @@ final class BrowserViewModel {
     private let client: RemoteClient?      // nil → local browser
     let isLocal: Bool
 
+    /// Set when this pane's session has been closed. A closed browser does
+    /// nothing further: a refresh that arrives late, or a listing that fails
+    /// because the connection was just shut, must not log back in — that
+    /// connection would belong to no tab and nobody would ever close it.
+    private(set) var isClosed = false
+
+    func close() {
+        isClosed = true
+    }
+
     // MARK: Local init
 
     convenience init(localPath: String) {
@@ -118,7 +128,7 @@ final class BrowserViewModel {
         do {
             return try await client.listDirectory(at: path)
         } catch {
-            guard Self.isLikelyConnectionDrop(error) else { throw error }
+            guard !isClosed, Self.isLikelyConnectionDrop(error) else { throw error }
             try await client.connect()                  // re-establish in place
             return try await client.listDirectory(at: path)
         }
@@ -150,6 +160,7 @@ final class BrowserViewModel {
     }
 
     private func load(path: String, mode: NavMode) async {
+        guard !isClosed else { return }
         let previous = currentPath
         isLoading = true
         loadError = nil

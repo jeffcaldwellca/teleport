@@ -8,6 +8,11 @@ struct TeleportApp: App {
 
     init() {
         TemporaryFiles.sweepStale()
+        // One window: all of them would share this AppState, and every menu
+        // command would then run once per window. Sessions have their own
+        // tabs inside the window; the system's window tab bar (and its "+",
+        // which opens a second window) is turned off.
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
     var body: some Scene {

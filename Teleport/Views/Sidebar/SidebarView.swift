@@ -148,7 +148,9 @@ struct SidebarView: View {
                     Task { await appState.openSession(for: conn) }
                 }
                 .controlSize(.small)
-                .help("Open \(conn.displayTitle) alongside the current session (⏎)")
+                .help(appState.sessions(for: conn).isEmpty
+                      ? "Open \(conn.displayTitle) alongside the current session (⏎)"
+                      : "Switch to the open session for \(conn.displayTitle) (⏎)")
             }
         }
         .padding(.horizontal, 12)

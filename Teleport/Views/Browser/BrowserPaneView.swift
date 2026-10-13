@@ -109,10 +109,11 @@ struct BrowserPaneView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .transferCompleted)) { note in
             // Downloads land in the local pane, uploads in the remote pane.
-            let direction = note.userInfo?["direction"] as? String
-            let relevant = vm.isLocal ? direction == "download" : direction == "upload"
-            if relevant { scheduleAutoRefresh() }
+            // Uploads are refreshed per session by AppState, whether or not
+            // that session is the one on screen.
+            if vm.isLocal, note.userInfo?["direction"] as? String == "download" { scheduleAutoRefresh() }
         }
+        .onDisappear { autoRefreshTask?.cancel() }
     }
 
     /// Jump straight to a typed path — the only way into a folder whose
@@ -579,6 +580,11 @@ struct FileListView: View {
         .onChange(of: appState.focusedPane) { _, pane in
             listFocused = (pane == side)
         }
+        // A pane built for a newly shown session starts unfocused, and the
+        // change handler above won't run because the focused side hasn't
+        // changed — so claim focus on arrival too, or the keyboard goes dead
+        // after every tab switch.
+        .onAppear { listFocused = (appState.focusedPane == side) }
         // Double-click to open/download. Implemented via the backing NSTableView's
         // native doubleAction (not a SwiftUI gesture, which would suppress
         // single-click selection). Purely additive: if the table can't be found,
@@ -877,7 +883,6 @@ struct FileListView: View {
                     do {
                         try await appState.transferQueue.enqueueFolderDownload(
                             connection: session.connection,
-                            client: session.client,
                             remotePath: item.path,
                             folderName: item.name,
                             into: baseDir
@@ -948,7 +953,6 @@ struct FileListView: View {
                         do {
                             try await appState.transferQueue.enqueueFolderUpload(
                                 connection: session.connection,
-                                client: session.client,
                                 folderURL: url,
                                 remoteParent: currentPath
                             )
@@ -1048,7 +1052,7 @@ struct FileListView: View {
                 if ref.isDirectory {
                     do {
                         try await appState.transferQueue.enqueueFolderDownload(
-                            connection: session.connection, client: session.client,
+                            connection: session.connection,
                             remotePath: ref.remotePath, folderName: ref.fileName, into: destDir
                         )
                     } catch { appState.showError(error) }
@@ -1238,9 +1242,9 @@ struct FileListView: View {
     /// Upload local files/folders into `remoteParent` through the transfer
     /// queue. Folders are uploaded recursively.
     private func uploadLocalURLs(_ urls: [URL], toRemoteParent remoteParent: String) {
-        // The active session rather than this pane's own: the local pane has
-        // none, and uploads from it go to the connected server all the same.
-        guard let session = appState.activeSession else { return }
+        // This pane's own session when it has one — the path came from it.
+        // The local pane has none; its uploads go to the session on screen.
+        guard let session = remoteSession ?? appState.activeSession else { return }
         for url in urls {
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
@@ -1249,7 +1253,6 @@ struct FileListView: View {
                     do {
                         try await appState.transferQueue.enqueueFolderUpload(
                             connection: session.connection,
-                            client: session.client,
                             folderURL: url,
                             remoteParent: remoteParent
                         )
