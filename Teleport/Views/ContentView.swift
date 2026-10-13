@@ -69,6 +69,9 @@ struct ContentView: View {
         } message: {
             Text(appState.alertMessage)
         }
+        .sheet(item: $state.syncModel) { model in
+            SyncSheet(model: model)
+        }
         .sheet(isPresented: $state.showingConnectionEditor) {
             ConnectionEditorView(existing: appState.editingConnection)
         }
@@ -147,6 +150,9 @@ private struct WindowCommandHandlers: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .sessionPrevious)) { _ in
                 appState.activatePreviousSession()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .syncFolders)) { _ in
+                appState.beginSync()
             }
             .onReceive(NotificationCenter.default.publisher(for: .sessionClose)) { _ in
                 Task { await appState.disconnect() }

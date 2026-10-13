@@ -118,6 +118,14 @@ struct TeleportCommands: Commands {
 
             Divider()
 
+            Button("Sync Folders…") {
+                NotificationCenter.default.post(name: .syncFolders, object: nil)
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .disabled(appState.activeSession == nil)
+
+            Divider()
+
             Button("Close Session") {
                 NotificationCenter.default.post(name: .sessionClose, object: nil)
             }
@@ -150,6 +158,8 @@ extension Notification.Name {
     static let toggleTransferQueue = Notification.Name("com.teleport.queue.toggle")
     static let sessionNext         = Notification.Name("com.teleport.session.next")
     static let sessionPrevious     = Notification.Name("com.teleport.session.previous")
+    static let syncFolders         = Notification.Name("com.teleport.session.sync")
+    static let localFilesChanged   = Notification.Name("com.teleport.localFilesChanged")
     static let sessionClose        = Notification.Name("com.teleport.session.close")
     static let switchPane          = Notification.Name("com.teleport.switchPane")
     static let transferCompleted   = Notification.Name("com.teleport.transferCompleted")
