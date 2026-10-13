@@ -180,6 +180,21 @@ public enum SSHKeyFingerprint {
         return "SHA256:" + digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The form OpenSSH prints (`ssh-keygen -lf`, first-connection prompts).
+    /// Fingerprints are stored as "SHA256:<hex>"; OpenSSH shows the same
+    /// digest as unpadded base64. Anything unparseable is returned unchanged.
+    public static func openSSH(_ fingerprint: String) -> String {
+        guard fingerprint.hasPrefix("SHA256:") else { return fingerprint }
+        let hex = Array(fingerprint.dropFirst("SHA256:".count))
+        guard !hex.isEmpty, hex.count.isMultiple(of: 2) else { return fingerprint }
+        var bytes = Data(capacity: hex.count / 2)
+        for index in stride(from: 0, to: hex.count, by: 2) {
+            guard let byte = UInt8(String(hex[index...index + 1]), radix: 16) else { return fingerprint }
+            bytes.append(byte)
+        }
+        return "SHA256:" + bytes.base64EncodedString().replacingOccurrences(of: "=", with: "")
+    }
+
     /// Friendlier display: groups of two hex digits separated by colons.
     public static func display(_ fingerprint: String) -> String {
         guard fingerprint.hasPrefix("SHA256:") else { return fingerprint }

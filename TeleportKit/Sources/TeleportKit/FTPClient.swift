@@ -421,6 +421,12 @@ public actor FTPClient: RemoteClient {
     /// session; renewed on every (re)connect.
     private var tlsSessionID = UUID().uuidString
 
+    // What this server turned out not to support, learned once per session
+    // instead of re-probed on every operation. nil = not tried yet.
+    private var supportsMLSD: Bool?
+    private var supportsListAll: Bool?
+    private var supportsEPSV: Bool?
+
     // FTP I/O here is blocking. Run this actor on a dedicated serial queue (a
     // real thread) instead of the Swift concurrency cooperative pool, so a slow
     // or concurrent transfer can't tie up a shared pool thread and stall every
@@ -530,6 +536,9 @@ public actor FTPClient: RemoteClient {
         socket = nil
         tlsActive = false
         tlsSessionID = UUID().uuidString
+        supportsMLSD = nil
+        supportsListAll = nil
+        supportsEPSV = nil
 
         let sock = FTPSocket()
 
@@ -620,9 +629,28 @@ public actor FTPClient: RemoteClient {
     }
 
     private func listSync(path: String) throws -> [FileItem] {
-        // Prefer MLSD (machine-readable); fall back to LIST
-        if let items = try? mlsdSync(path: path) { return items }
+        // Prefer MLSD (machine-readable); fall back to LIST. A server that
+        // doesn't know the command is remembered, so it isn't asked again on
+        // every listing.
+        if supportsMLSD != false {
+            do {
+                let items = try mlsdSync(path: path)
+                supportsMLSD = true
+                return items
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch FTPError.serverError(let code, _) where Self.isUnknownCommand(code) {
+                supportsMLSD = false
+            } catch {
+                // Anything else: let LIST report what's actually wrong.
+            }
+        }
         return try listRawSync(path: path)
+    }
+
+    /// Reply codes meaning "this server doesn't implement that command".
+    private static func isUnknownCommand(_ code: Int) -> Bool {
+        code == 500 || code == 502 || code == 504
     }
 
     private func mlsdSync(path: String) throws -> [FileItem] {
@@ -636,14 +664,42 @@ public actor FTPClient: RemoteClient {
     }
 
     private func listRawSync(path: String) throws -> [FileItem] {
-        let data = try openDataConnectionAndRun(command: "LIST \(path)")
+        // Plain LIST leaves out dotfiles on most servers, so ask for them.
+        // "-a" is a de-facto convention, not part of the protocol: a server
+        // that rejects it, or answers with nothing at all (even an empty
+        // directory lists "." and ".." under -a), gets the plain form.
+        if supportsListAll != false {
+            do {
+                let lines = try listLines(command: "LIST -a \(path)")
+                if !lines.isEmpty {
+                    supportsListAll = true
+                    return Self.parseListLines(lines, basePath: path)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch FTPError.serverError(let code, _) where Self.isUnknownCommand(code) || code == 501 {
+                supportsListAll = false
+            } catch {
+                // e.g. 550: "-a" taken for a file name, or the directory
+                // really is missing — the plain LIST below settles which.
+            }
+        }
+        return Self.parseListLines(try listLines(command: "LIST \(path)"), basePath: path)
+    }
+
+    private func listLines(command: String) throws -> [String] {
+        let data = try openDataConnectionAndRun(command: command)
         guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
             throw FTPError.listingFailed("Could not decode listing")
         }
         return text.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .compactMap { FTPListingParser.listLine($0, basePath: path) }
+    }
+
+    private static func parseListLines(_ lines: [String], basePath: String) -> [FileItem] {
+        lines
+            .compactMap { FTPListingParser.listLine($0, basePath: basePath) }
             .filter { $0.name != "." && $0.name != ".." }
     }
 
@@ -1011,13 +1067,16 @@ public actor FTPClient: RemoteClient {
     /// `secureDataConnection` for the TLS step.
     private func openDataConnection() throws -> FTPSocket {
         // Try EPSV first (better NAT traversal, IPv6 compatible)
-        if let sock = try? openEPSV() { return sock }
+        if supportsEPSV != false, let sock = try? openEPSV() { return sock }
         return try openPASV()
     }
 
     private func openEPSV() throws -> FTPSocket {
         let resp = try sendCommand("EPSV")
-        guard resp.code == 229 else { throw FTPError.noPassiveAddress }
+        guard resp.code == 229 else {
+            if Self.isUnknownCommand(resp.code) { supportsEPSV = false }
+            throw FTPError.noPassiveAddress
+        }
 
         // Parse "|||port|" from response text
         guard let portStr = resp.message.firstMatch(of: #/\|\|\|(\d+)\|/#)?.output.1,
@@ -1145,7 +1204,7 @@ public enum FTPListingParser {
 
     /// `ls -l` carries no timezone, so we interpret it as UTC for consistency
     /// with MLSD/MDTM (which are UTC) instead of the client's local zone.
-    public static func listDate(_ month: String, _ day: String, _ yearOrTime: String) -> Date? {
+    public static func listDate(_ month: String, _ day: String, _ yearOrTime: String, now: Date = Date()) -> Date? {
         let months = ["Jan","Feb","Mar","Apr","May","Jun",
                       "Jul","Aug","Sep","Oct","Nov","Dec"]
         guard let mIdx = months.firstIndex(of: month) else { return nil }
@@ -1155,14 +1214,23 @@ public enum FTPListingParser {
         c.timeZone   = TimeZone(identifier: "UTC")
         c.month = mIdx + 1
         c.day   = Int(day)
-        if yearOrTime.contains(":") {
-            let t = yearOrTime.components(separatedBy: ":")
-            c.hour   = Int(t[0])
-            c.minute = t.count > 1 ? Int(t[1]) : 0
-            c.year   = cal.component(.year, from: Date())
-        } else {
+        guard yearOrTime.contains(":") else {
             c.year = Int(yearOrTime)
+            return cal.date(from: c)
         }
-        return cal.date(from: c)
+        // A time instead of a year means "within roughly the last six
+        // months". Assume this year, unless that lands in the future — then
+        // it's last year's (e.g. "Dec 28" read in early January). A day of
+        // slack absorbs server clocks and time zones ahead of ours.
+        let t = yearOrTime.components(separatedBy: ":")
+        c.hour   = Int(t[0])
+        c.minute = t.count > 1 ? Int(t[1]) : 0
+        c.year   = cal.component(.year, from: now)
+        guard let date = cal.date(from: c) else { return nil }
+        if date > now.addingTimeInterval(24 * 60 * 60) {
+            c.year = cal.component(.year, from: now) - 1
+            return cal.date(from: c)
+        }
+        return date
     }
 }
