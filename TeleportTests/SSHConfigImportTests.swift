@@ -1,0 +1,65 @@
+import XCTest
+import TeleportKit
+@testable import Teleport
+
+final class SSHConfigImportTests: XCTestCase {
+
+    private var suiteName: String!
+    private var store: ConnectionStore!
+
+    override func setUp() {
+        suiteName = "teleport-tests-\(UUID().uuidString)"
+        store = ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!)
+    }
+
+    override func tearDown() {
+        UserDefaults().removePersistentDomain(forName: suiteName)
+    }
+
+    func test_import_createsSFTPConnectionsNamedAfterTheAlias() {
+        let added = store.importHosts([
+            SSHConfig.Host(alias: "web", hostName: "web01.example.com", user: "deploy", port: 2202,
+                           identityFile: "/Users/me/.ssh/deploy"),
+        ])
+
+        XCTAssertEqual(added, 1)
+        let connection = store.connections[0]
+        XCTAssertEqual(connection.name, "web")
+        XCTAssertEqual(connection.host, "web01.example.com")
+        XCTAssertEqual(connection.port, 2202)
+        XCTAssertEqual(connection.username, "deploy")
+        XCTAssertEqual(connection.connectionProtocol, .sftp)
+        XCTAssertEqual(connection.sshKeyPath, "/Users/me/.ssh/deploy")
+        XCTAssertFalse(connection.useSSHAgent)
+    }
+
+    /// No IdentityFile means `ssh` would be relying on the agent (or default
+    /// keys); the imported connection does the same.
+    func test_import_withoutAnIdentityFile_turnsTheAgentOn_andDefaultsUserAndPort() {
+        store.importHosts([SSHConfig.Host(alias: "db", hostName: "db.internal")])
+
+        let connection = store.connections[0]
+        XCTAssertTrue(connection.useSSHAgent)
+        XCTAssertEqual(connection.sshKeyPath, "")
+        XCTAssertEqual(connection.port, 22)
+        XCTAssertEqual(connection.username, NSUserName())
+    }
+
+    func test_import_skipsHostsThatAreAlreadySaved_soImportingTwiceAddsNothing() {
+        let hosts = [
+            SSHConfig.Host(alias: "web", hostName: "web01.example.com", user: "deploy"),
+            SSHConfig.Host(alias: "db", hostName: "db.internal"),
+        ]
+        XCTAssertEqual(store.importHosts(hosts), 2)
+        XCTAssertEqual(store.importHosts(hosts), 0)
+        XCTAssertEqual(store.connections.count, 2)
+        XCTAssertTrue(store.isSaved(hosts[0]))
+        XCTAssertFalse(store.isSaved(SSHConfig.Host(alias: "new", hostName: "new.example.com")))
+    }
+
+    func test_importedConnections_persist() {
+        store.importHosts([SSHConfig.Host(alias: "web", hostName: "web01.example.com")])
+        let reloaded = ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertEqual(reloaded.connections.map(\.name), ["web"])
+    }
+}

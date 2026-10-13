@@ -3,6 +3,7 @@ import TeleportKit
 
 struct SidebarView: View {
     @Environment(AppState.self) private var appState
+    @State private var showingSSHConfigImport = false
 
     var body: some View {
         @Bindable var state = appState
@@ -54,6 +55,9 @@ struct SidebarView: View {
             Task { await appState.openSession(for: conn) }
         })
         .safeAreaInset(edge: .bottom) { bottomBar }
+        .sheet(isPresented: $showingSSHConfigImport) {
+            SSHConfigImportSheet()
+        }
         // Selecting a favorite just highlights it; connecting is an explicit
         // act (double-click, ⏎, or the context menu) so arrowing through the
         // list doesn't tear down and rebuild connections.
@@ -87,16 +91,21 @@ struct SidebarView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 8) {
-            Button {
-                appState.editingConnection     = nil
-                appState.showingConnectionEditor = true
+            Menu {
+                Button("New Connection…") {
+                    appState.editingConnection     = nil
+                    appState.showingConnectionEditor = true
+                }
+                Button("Import from SSH Config…") { showingSSHConfigImport = true }
             } label: {
                 Image(systemName: "plus")
                     .frame(width: 16, height: 16)
             }
-            .buttonStyle(.plain)
-            .help("New Connection")
-            .accessibilityLabel("New Connection")
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Add a connection")
+            .accessibilityLabel("Add Connection")
 
             Spacer(minLength: 4)
 
