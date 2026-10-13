@@ -61,6 +61,14 @@ private final class GatedClient: RemoteClient, @unchecked Sendable {
     func fileExists(at remotePath: String) async -> Bool { false }
 }
 
+/// Stand-in for the Keychain.
+final class MemorySecrets: ConnectionSecrets {
+    var passwords: [UUID: String] = [:]
+    func savePassword(_ password: String, for connectionID: UUID) throws { passwords[connectionID] = password }
+    func password(for connectionID: UUID) -> String? { passwords[connectionID] }
+    func deletePassword(for connectionID: UUID) { passwords[connectionID] = nil }
+}
+
 @MainActor
 final class AppStateSessionTests: XCTestCase {
 
@@ -69,6 +77,9 @@ final class AppStateSessionTests: XCTestCase {
     /// Behaviour for each client the app asks for, in order (default: succeed).
     private var script: [GatedClient.Behaviour] = []
     private var clients: [GatedClient] = []
+    private var secrets: MemorySecrets!
+    private var forgottenPassphrases: [UUID] = []
+    private var removedKeyBookmarks: [UUID] = []
 
     private let alpha = Connection(name: "Alpha", host: "alpha.example.com")
     private let beta  = Connection(name: "Beta",  host: "beta.example.com")
@@ -78,8 +89,17 @@ final class AppStateSessionTests: XCTestCase {
         suiteName = "teleport-tests-\(UUID().uuidString)"
         script = []
         clients = []
+        secrets = MemorySecrets()
+        forgottenPassphrases = []
+        removedKeyBookmarks = []
         state = AppState(
-            connectionStore: ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!),
+            // Nothing here may reach the real Keychain or bookmark file.
+            connectionStore: ConnectionStore(
+                defaults: UserDefaults(suiteName: suiteName)!,
+                secrets: secrets,
+                forgetPassphrase: { [unowned self] in forgottenPassphrases.append($0) }
+            ),
+            removeKeyBookmark: { [unowned self] in removedKeyBookmarks.append($0) },
             clientFactory: { [unowned self] _, _ in
                 let client = GatedClient(script.isEmpty ? .succeed : script.removeFirst())
                 clients.append(client)
@@ -283,6 +303,8 @@ final class AppStateSessionTests: XCTestCase {
     // MARK: - Favourites
 
     func test_deletingAFavourite_closesAllOfItsSessions() async throws {
+        try state.connectionStore.add(alpha, password: "alpha's password")
+        try state.connectionStore.add(beta, password: "beta's password")
         await state.openSession(for: alpha)
         await state.openNewSession(for: alpha)
         await state.openSession(for: beta)
@@ -292,6 +314,21 @@ final class AppStateSessionTests: XCTestCase {
         try await waitUntil("alpha's sessions closed") { self.titles == ["Beta"] }
         XCTAssertEqual(activeTitle, "Beta")
         XCTAssertEqual(clients[0].disconnects + clients[1].disconnects, 2)
+        // …and everything stored for it goes too.
+        XCTAssertEqual(state.connectionStore.connections.map(\.name), ["Beta"])
+        XCTAssertNil(secrets.passwords[alpha.id])
+        XCTAssertEqual(secrets.passwords[beta.id], "beta's password")
+        XCTAssertEqual(forgottenPassphrases, [alpha.id])
+        XCTAssertEqual(removedKeyBookmarks, [alpha.id])
+    }
+
+    func test_sessionWithID_findsOpenSessionsOnly() async {
+        await state.openSession(for: alpha)
+        let id = state.sessions[0].id
+        XCTAssertTrue(state.session(withID: id) === state.sessions[0])
+        await state.disconnect()
+        XCTAssertNil(state.session(withID: id))
+        XCTAssertNil(state.session(withID: nil))
     }
 
     // MARK: - Review fixes

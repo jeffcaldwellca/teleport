@@ -21,6 +21,8 @@ struct SessionTabBar: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Sessions")
             }
             // Keep the active tab in view when it changes by keyboard or by
             // opening a new session off the end of the strip.
@@ -68,7 +70,7 @@ private struct SessionTab: View {
             }
             .buttonStyle(.plain)
             .help("\(title) — \(session.connection.displaySubtitle)")
-            .accessibilityLabel("Session \(title)")
+            .accessibilityLabel(session.isConnecting ? "Session \(title), connecting" : "Session \(title)")
             .accessibilityAddTraits(isActive ? .isSelected : [])
 
             Button {

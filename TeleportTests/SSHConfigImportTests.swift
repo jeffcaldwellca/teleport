@@ -9,7 +9,8 @@ final class SSHConfigImportTests: XCTestCase {
 
     override func setUp() {
         suiteName = "teleport-tests-\(UUID().uuidString)"
-        store = ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!)
+        store = ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!, secrets: MemorySecrets(),
+                                forgetPassphrase: { _ in })
     }
 
     override func tearDown() {
@@ -82,7 +83,8 @@ final class SSHConfigImportTests: XCTestCase {
 
     func test_importedConnections_persist() {
         store.importHosts([SSHConfig.Host(alias: "web", hostName: "web01.example.com")])
-        let reloaded = ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!)
+        let reloaded = ConnectionStore(defaults: UserDefaults(suiteName: suiteName)!, secrets: MemorySecrets(),
+                                       forgetPassphrase: { _ in })
         XCTAssertEqual(reloaded.connections.map(\.name), ["web"])
     }
 }

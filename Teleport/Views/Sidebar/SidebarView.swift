@@ -187,6 +187,7 @@ struct ConnectionRowView: View {
             let open = appState.sessions(for: connection)
             if open.contains(where: \.isConnecting) {
                 ProgressView().controlSize(.small)
+                    .accessibilityLabel("Connecting")
             } else if !open.isEmpty {
                 Circle().fill(.green).frame(width: 7, height: 7)
                     .accessibilityLabel(open.count == 1 ? "Connected" : "\(open.count) sessions open")
@@ -230,6 +231,6 @@ extension AppState {
             Task { for id in open { await closeSession(id) } }
         }
         connectionStore.delete(conn)
-        try? BookmarkStore.shared.remove(name: BookmarkStore.sshKeyName(for: conn.id))
+        removeKeyBookmark(conn.id)
     }
 }

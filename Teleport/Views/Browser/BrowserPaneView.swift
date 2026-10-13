@@ -536,7 +536,7 @@ struct FileListView: View {
                     // Remote file → in-app ref (drop on local pane, goes through
                     // the queue) + download-on-drop promise (drag to Finder).
                     TableRow(item)
-                        .draggable(RemoteFileDrag(client: session.client,
+                        .draggable(RemoteFileDrag(sessionID: session.id,
                                                   connection: session.connection,
                                                   queue: appState.transferQueue,
                                                   remotePath: item.path,
@@ -548,7 +548,7 @@ struct FileListView: View {
                     // the local pane) + directory promise for Finder drops.
                     // Dropping remote items on it moves them into the folder.
                     TableRow(item)
-                        .draggable(RemoteFolderDrag(client: session.client,
+                        .draggable(RemoteFolderDrag(sessionID: session.id,
                                                     connection: session.connection,
                                                     queue: appState.transferQueue,
                                                     remotePath: item.path,
@@ -589,10 +589,17 @@ struct FileListView: View {
         // native doubleAction (not a SwiftUI gesture, which would suppress
         // single-click selection). Purely additive: if the table can't be found,
         // selection + Return + the context menu still work.
-        .background(TableBridge(handle: tableHandle) { row in
+        .background(TableBridge(handle: tableHandle, onConnect: {
+            // A session's pane is rebuilt each time its tab comes forward;
+            // put the list back where the user left it.
+            tableHandle.scroll(to: vm.savedScrollOffset)
+        }) { row in
             guard row >= 0, row < vm.displayedItems.count else { return }
             activate(vm.displayedItems[row])
         })
+        .onDisappear {
+            if let offset = tableHandle.scrollOffset { vm.savedScrollOffset = offset }
+        }
         .overlay(dropHighlight)
         .onDrop(of: acceptedDropTypes, delegate: PaneDropDelegate(
             types: acceptedDropTypes,
@@ -994,7 +1001,8 @@ struct FileListView: View {
         clearDropHover()
         guard let session = remoteSession else { return }
         Task {
-            for ref in refs {
+            // A rename only makes sense on the server the item lives on.
+            for ref in refs where ref.sessionID == nil || ref.sessionID == session.id {
                 let sourceParent = (ref.remotePath as NSString).deletingLastPathComponent
                 // No-ops and traps: onto itself, into its current folder, or a
                 // folder into its own descendant.
@@ -1046,9 +1054,11 @@ struct FileListView: View {
     /// hovered folder, or the current directory) through the transfer queue
     /// (progress, conflict handling, retries).
     private func downloadRefs(_ refs: [RemoteFileRef], into destDir: URL) {
-        guard let session = appState.activeSession else { return }
         Task {
             for ref in refs {
+                // From the session the item was dragged out of, not whichever
+                // tab is in front by the time the drop is processed.
+                guard let session = appState.session(withID: ref.sessionID) ?? appState.activeSession else { continue }
                 if ref.isDirectory {
                     do {
                         try await appState.transferQueue.enqueueFolderDownload(
@@ -1350,6 +1360,20 @@ final class TableHandle {
         return row >= 0 ? row : nil
     }
 
+    /// How far the list is scrolled, or nil when the table is gone.
+    var scrollOffset: CGFloat? {
+        tableView?.enclosingScrollView?.contentView.bounds.origin.y
+    }
+
+    func scroll(to offset: CGFloat) {
+        guard offset > 0, let scrollView = tableView?.enclosingScrollView else { return }
+        // After the current layout pass, when the rows exist to scroll to.
+        DispatchQueue.main.async {
+            scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: offset))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
     /// Frame of `row` in the Table coordinate space.
     func frame(ofRow row: Int) -> CGRect? {
         guard let anchor, let tableView else { return nil }
@@ -1368,9 +1392,13 @@ final class TableHandle {
 struct TableBridge: NSViewRepresentable {
     /// Receives the table for drop targeting; nil when only double-click is needed.
     var handle: TableHandle? = nil
+    /// Called once, when the backing table has been found.
+    var onConnect: (() -> Void)? = nil
     let onDoubleClick: (Int) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(handle: handle, onDoubleClick: onDoubleClick) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(handle: handle, onConnect: onConnect, onDoubleClick: onDoubleClick)
+    }
 
     func makeNSView(context: Context) -> NSView {
         let view = PassthroughView()
@@ -1387,12 +1415,14 @@ struct TableBridge: NSViewRepresentable {
 
     final class Coordinator: NSObject {
         let handle: TableHandle?
+        let onConnect: (() -> Void)?
         var onDoubleClick: (Int) -> Void
         weak var anchor: NSView?
         weak var tableView: NSTableView?
 
-        init(handle: TableHandle?, onDoubleClick: @escaping (Int) -> Void) {
+        init(handle: TableHandle?, onConnect: (() -> Void)?, onDoubleClick: @escaping (Int) -> Void) {
             self.handle = handle
+            self.onConnect = onConnect
             self.onDoubleClick = onDoubleClick
         }
 
@@ -1427,6 +1457,7 @@ struct TableBridge: NSViewRepresentable {
             handle?.tableView = tv
             tv.target = self
             tv.doubleAction = #selector(handleDoubleClick)
+            onConnect?()
         }
 
         @objc private func handleDoubleClick() {
@@ -1450,14 +1481,14 @@ struct TableBridge: NSViewRepresentable {
 /// `FileRepresentation` whose export closure runs at drop time, so nothing is
 /// transferred until the user actually drops.
 struct RemoteFileDrag: Transferable, Sendable {
-    let client: RemoteClient
+    let sessionID: RemoteSession.ID
     let connection: Connection
     let queue: TransferQueueViewModel
     let remotePath: String
     let fileName: String
 
     var ref: RemoteFileRef {
-        RemoteFileRef(remotePath: remotePath, fileName: fileName, isDirectory: false)
+        RemoteFileRef(remotePath: remotePath, fileName: fileName, isDirectory: false, sessionID: sessionID)
     }
 
     static var transferRepresentation: some TransferRepresentation {
@@ -1478,11 +1509,15 @@ struct RemoteFileDrag: Transferable, Sendable {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appending(component: fileName)
         // Tracked in the queue so the export shows progress and can be cancelled.
+        // On a connection of its own: Finder may still be waiting on this
+        // long after the tab it was dragged from has been closed.
         try await queue.runTracked(
             connection: connection, direction: .download,
             localURL: dest, remotePath: remotePath
-        ) { progress in
-            try await client.download(remotePath: remotePath, to: dest, resume: false, progress: progress)
+        ) { [queue, connection, remotePath] progress in
+            try await queue.withOwnConnection(to: connection) { client in
+                try await client.download(remotePath: remotePath, to: dest, resume: false, progress: progress)
+            }
         }
         return SentTransferredFile(dest)
     }
@@ -1494,14 +1529,14 @@ struct RemoteFileDrag: Transferable, Sendable {
 /// ref (recursive download through the queue); dropping on Finder exports the
 /// folder by recursively downloading it to a temp directory first.
 struct RemoteFolderDrag: Transferable, Sendable {
-    let client: RemoteClient
+    let sessionID: RemoteSession.ID
     let connection: Connection
     let queue: TransferQueueViewModel
     let remotePath: String
     let folderName: String
 
     var ref: RemoteFileRef {
-        RemoteFileRef(remotePath: remotePath, fileName: folderName, isDirectory: true)
+        RemoteFileRef(remotePath: remotePath, fileName: folderName, isDirectory: true, sessionID: sessionID)
     }
 
     static var transferRepresentation: some TransferRepresentation {
@@ -1516,46 +1551,50 @@ struct RemoteFolderDrag: Transferable, Sendable {
             .appending(component: "Drag-\(UUID().uuidString)", directoryHint: .isDirectory)
         let root = base.appending(component: folderName)
 
-        // Walk the remote tree first so file downloads can report an overall
-        // byte total. Same guards as the queue's folder download: sanitized
-        // names, containment, skipped symlinks, capped entry count.
-        var pendingDirs: [(remote: String, local: URL)] = [(remotePath, root)]
-        var files: [(remote: String, local: URL)] = []
-        var totalBytes: Int64 = 0
-        while let (remoteDir, localDir) = pendingDirs.popLast() {
-            try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
-            for item in try await client.listDirectory(at: remoteDir) {
-                guard let name = RemotePath.sanitizedFilename(item.name), !item.isSymlink else { continue }
-                let childLocal = localDir.appending(component: name)
-                guard RemotePath.isContained(childLocal, in: localDir) else { continue }
-                if item.isDirectory {
-                    pendingDirs.append((item.path, childLocal))
-                } else {
-                    files.append((item.path, childLocal))
-                    totalBytes += item.size ?? 0
-                }
-                if files.count + pendingDirs.count > TransferQueueViewModel.folderTransferLimit {
-                    throw TransferQueueViewModel.FolderTransferError.tooLarge
-                }
-            }
-        }
-
-        // One queue row tracks the whole folder export (progress + Cancel).
-        let fileList = files
-        let expectedTotal = totalBytes
+        // One queue row tracks the whole folder export (progress + Cancel),
+        // on a connection of its own so it survives its tab being closed.
+        let limit = TransferQueueViewModel.folderTransferLimit
         try await queue.runTracked(
             connection: connection, direction: .download,
             localURL: root, remotePath: remotePath
-        ) { progress in
-            var doneBytes: Int64 = 0
-            for (remote, local) in fileList {
-                try await client.download(remotePath: remote, to: local, resume: false) { bytes, _ in
-                    progress(doneBytes + bytes, expectedTotal)
+        ) { [queue, connection, remotePath] progress in
+            try await queue.withOwnConnection(to: connection) { client in
+                // Walk the remote tree first so file downloads can report an
+                // overall byte total. Same guards as the queue's folder
+                // download: sanitized names, containment, skipped symlinks,
+                // capped entry count.
+                var pendingDirs: [(remote: String, local: URL)] = [(remotePath, root)]
+                var files: [(remote: String, local: URL)] = []
+                var totalBytes: Int64 = 0
+                while let (remoteDir, localDir) = pendingDirs.popLast() {
+                    try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+                    for item in try await client.listDirectory(at: remoteDir) {
+                        guard let name = RemotePath.sanitizedFilename(item.name), !item.isSymlink else { continue }
+                        let childLocal = localDir.appending(component: name)
+                        guard RemotePath.isContained(childLocal, in: localDir) else { continue }
+                        if item.isDirectory {
+                            pendingDirs.append((item.path, childLocal))
+                        } else {
+                            files.append((item.path, childLocal))
+                            totalBytes += item.size ?? 0
+                        }
+                        if files.count + pendingDirs.count > limit {
+                            throw TransferQueueViewModel.FolderTransferError.tooLarge
+                        }
+                    }
                 }
-                doneBytes += (try? FileManager.default
-                    .attributesOfItem(atPath: local.path)[.size] as? Int64) ?? 0
+
+                var doneBytes: Int64 = 0
+                for (remote, local) in files {
+                    let before = doneBytes, expected = totalBytes
+                    try await client.download(remotePath: remote, to: local, resume: false) { bytes, _ in
+                        progress(before + bytes, expected)
+                    }
+                    doneBytes += (try? FileManager.default
+                        .attributesOfItem(atPath: local.path)[.size] as? Int64) ?? 0
+                }
+                progress(totalBytes, totalBytes)
             }
-            progress(expectedTotal, expectedTotal)
         }
         return SentTransferredFile(root)
     }
