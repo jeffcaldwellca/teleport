@@ -161,8 +161,9 @@ public struct SSHConfig: Sendable {
     }
 
     /// OpenSSH host patterns: `*` is any run of characters, `?` exactly one.
-    static func glob(_ pattern: String, matches name: String) -> Bool {
-        let pattern = Array(pattern.lowercased()), name = Array(name.lowercased())
+    static func glob(_ pattern: String, matches name: String, caseSensitive: Bool = false) -> Bool {
+        let pattern = Array(caseSensitive ? pattern : pattern.lowercased())
+        let name = Array(caseSensitive ? name : name.lowercased())
         var p = 0, n = 0, star: Int? = nil, mark = 0
         while n < name.count {
             if p < pattern.count, pattern[p] == "?" || pattern[p] == name[n] {
