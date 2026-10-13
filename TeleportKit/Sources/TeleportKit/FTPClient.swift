@@ -412,6 +412,7 @@ public actor FTPClient: RemoteClient {
     private let password: String
     private let certificateStore: SSHHostKeyStore
     private let onUntrustedCertificate: @Sendable (UntrustedCertificate) async -> Bool
+    private let dedicatedToTransfers: Bool
     private var socket: FTPSocket?
     private var tlsActive = false
     /// Certificate the user accepted for this server (FTPS only), if any.
@@ -435,16 +436,33 @@ public actor FTPClient: RemoteClient {
     ///   - onUntrustedCertificate: asked whether to trust an FTPS certificate
     ///     the system rejects. Called before any credentials are sent.
     ///     Defaults to `false` (fail closed).
+    ///   - dedicatedToTransfers: run uploads and downloads on this session's
+    ///     own control connection instead of logging in a separate session
+    ///     for each one. For a client nothing else uses concurrently (a queue
+    ///     worker), where the per-file login would be pure overhead; a
+    ///     browsing session leaves it off so a long transfer can't block
+    ///     listings.
     public init(
         connection: Connection,
         password: String,
         certificateStore: SSHHostKeyStore = .tlsCertificates,
-        onUntrustedCertificate: @escaping @Sendable (UntrustedCertificate) async -> Bool = { _ in false }
+        onUntrustedCertificate: @escaping @Sendable (UntrustedCertificate) async -> Bool = { _ in false },
+        dedicatedToTransfers: Bool = false
     ) {
+        self.dedicatedToTransfers = dedicatedToTransfers
         self.connection = connection
         self.password   = password
         self.certificateStore = certificateStore
         self.onUntrustedCertificate = onUntrustedCertificate
+    }
+
+    /// After a transfer fails partway on the control connection its state is
+    /// unknowable (a reply may still be in flight), so the session is dropped
+    /// rather than reused.
+    private func abandonSession() {
+        socket?.close()
+        socket = nil
+        tlsActive = false
     }
 
     /// A separate session for one transfer, sharing this client's trust policy.
@@ -637,6 +655,16 @@ public actor FTPClient: RemoteClient {
         resume: Bool,
         progress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
+        if dedicatedToTransfers {
+            do {
+                try performDownload(remotePath: remotePath, to: localURL, resume: resume, progress: progress)
+            } catch {
+                abandonSession()
+                DownloadStaging.discardEmptyPartial(for: localURL)
+                throw error
+            }
+            return
+        }
         let xfer = makeTransferClient()
         try await xfer.connect()
         do {
@@ -724,6 +752,15 @@ public actor FTPClient: RemoteClient {
         resume: Bool,
         progress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
+        if dedicatedToTransfers {
+            do {
+                try performUpload(from: localURL, remotePath: remotePath, resume: resume, progress: progress)
+            } catch {
+                abandonSession()
+                throw error
+            }
+            return
+        }
         let xfer = makeTransferClient()
         try await xfer.connect()
         do {
@@ -811,6 +848,10 @@ public actor FTPClient: RemoteClient {
     }
 
     // MARK: - Keep-Alive
+
+    public func ping() async throws {
+        try sendCommand("NOOP")
+    }
 
     public func keepAlive() async {
         do {
