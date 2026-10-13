@@ -89,6 +89,22 @@
     },
     {
       "@type": "Question",
+      "name": "Does Teleport support SSH keys and ssh-agent?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Teleport authenticates over SFTP with ed25519, ECDSA, and RSA keys, including passphrase-protected ones, with keys held by ssh-agent, and can import hosts from ~/.ssh/config."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can Teleport sync a folder with a server?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Teleport compares a local folder with a remote one, shows what differs, and uploads or downloads only the files that changed. The same is available from the terminal as tport sync."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "What macOS version does Teleport require?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -582,7 +598,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M17 15l3 2-3 2"/></svg>
         </div>
         <h3>FTP · FTPS · SFTP</h3>
-        <p>Connect to any server over FTP, FTPS, or SFTP — with SSH key authentication and host-key verification built in.</p>
+        <p>Connect to any server over FTP, FTPS, or SFTP — with SSH keys, ssh-agent, and host-key verification built in.</p>
       </div>
       <div class="feature-card">
         <div class="icon">
@@ -604,6 +620,34 @@
         </div>
         <h3>Native SwiftUI</h3>
         <p>Built for macOS from the ground up — fast, lightweight, and right at home on your Mac.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h7l2 3h9v8H3z"/><path d="M3 8V5h6l2 3"/></svg>
+        </div>
+        <h3>Several Servers at Once</h3>
+        <p>Every connection gets its own tab and stays connected while you work in another.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h13l-3-3M20 15H7l3 3"/></svg>
+        </div>
+        <h3>Folder Sync</h3>
+        <p>Compare a local and a remote folder, preview the differences, and transfer only what changed — in the app or with <code>tport sync</code>.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/></svg>
+        </div>
+        <h3>Your SSH Setup, As Is</h3>
+        <p>Passphrase-protected keys, ssh-agent, and hosts from <code>~/.ssh/config</code> work the way they do for <code>ssh</code>.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.3 7.8-8 9-4.7-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+        </div>
+        <h3>Safe by Default</h3>
+        <p>A failed download never damages the file it was replacing, local deletes go to the Trash, and a server is verified before your password is sent.</p>
       </div>
     </div>
   </section>
@@ -717,6 +761,14 @@
       <details class="faq-item">
         <summary>Does Teleport have a command-line interface?</summary>
         <p>Yes. Teleport includes <code>tport</code>, a scriptable command-line tool for automating file transfers from the terminal or shell scripts.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does Teleport support SSH keys and ssh-agent?</summary>
+        <p>Yes. Teleport authenticates over SFTP with ed25519, ECDSA, and RSA keys, including passphrase-protected ones, with keys held by ssh-agent, and can import hosts from <code>~/.ssh/config</code>.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can Teleport sync a folder with a server?</summary>
+        <p>Yes. Teleport compares a local folder with a remote one, shows what differs, and uploads or downloads only the files that changed. The same is available from the terminal as <code>tport sync</code>.</p>
       </details>
       <details class="faq-item">
         <summary>What macOS version does Teleport require?</summary>

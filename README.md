@@ -27,10 +27,12 @@ app that feels like one.
 ## Features
 
 - **FTP, FTPS, and SFTP** in one client, with SSH keys (ed25519, ECDSA, RSA; passphrases and ssh-agent supported) and host-key verification
+- **Several servers at once** — each connection gets its own tab, and stays connected while you work in another
 - **`tport`**, a scriptable CLI, bundled with the app and installable from Settings
 - **Resume &amp; conflict handling** — interrupted transfers pick up where they left off, with overwrite/skip/if-newer policies
 - **Folder sync** — compare a local and a remote folder and transfer only what differs, with a preview
-- **Transfer queue** for tracking multiple in-flight uploads and downloads
+- **Transfer queue** for tracking multiple in-flight uploads and downloads, with pause, resume and retry
+- **Safe by default** — downloads are staged and only replace a file once complete, local deletes go to the Trash, and a server's identity (SSH host key or untrusted FTPS certificate) is confirmed before any credentials are sent
 - **Saved connections** with Keychain-backed credential storage, importable from `~/.ssh/config`
 - **In-place remote file editing** — edit a remote file without a manual download/upload round trip
 - **Permissions editor** for `chmod`-style permission changes from the UI
@@ -78,6 +80,11 @@ tport ls ftps://user@example.com/ --accept-untrusted-cert
 destination, a different size, or newer at the source. Nothing is deleted without
 `--delete`, excluded paths are never deleted, and an empty source refuses to empty
 the destination.
+
+For SFTP, `tport` behaves like `ssh`: with no key or password given it uses the keys
+in ssh-agent, and it reads `~/.ssh/config` for host aliases (`--no-agent` and
+`--no-ssh-config` turn those off). Servers it has been told to trust are listed with
+`tport trust list` and removed with `tport trust forget <host>`.
 
 Other subcommands: `mkdir`, `rm`, `mv`, `chmod`, `chown`, `stat`. Run `tport --help`
 or `tport <command> --help` for full usage. Homebrew installs put it on your `PATH`
@@ -136,6 +143,18 @@ The CLI (`tport`) and shared engine (`TeleportKit`) are a standalone Swift packa
 ```sh
 cd TeleportKit
 swift build -c release
+```
+
+### Running the tests
+
+`swift test` (in `TeleportKit/`) and `xcodebuild test -scheme Teleport` run the unit
+tests. The transfer engine is also tested against real servers — FTP, SFTP, and
+explicit and implicit FTPS — which are skipped unless they are running:
+
+```sh
+scripts/start-test-servers.sh          # docker; also generates throwaway SSH keys
+(cd TeleportKit && swift build)        # the CLI tests drive the built tport
+TEST_RUNNER_TELEPORT_IT=1 xcodebuild test -project Teleport.xcodeproj -scheme Teleport -destination 'platform=macOS'
 ```
 
 ## License
