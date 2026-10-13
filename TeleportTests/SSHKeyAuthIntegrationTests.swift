@@ -111,6 +111,102 @@ final class SSHKeyAuthIntegrationTests: XCTestCase {
             // expected
         }
     }
+
+    // MARK: - ssh-agent
+
+    /// A real `ssh-agent` on a private socket, holding the named test keys.
+    private func startAgent(holding keys: [String]) throws -> SSHAgent {
+        let socket = "/tmp/tp-it-agent-\(UUID().uuidString.prefix(8)).sock"
+        let agent = Process()
+        agent.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-agent")
+        agent.arguments = ["-D", "-a", socket]
+        agent.standardOutput = FileHandle.nullDevice
+        agent.standardError = FileHandle.nullDevice
+        try agent.run()
+        addTeardownBlock {
+            agent.terminate()
+            try? FileManager.default.removeItem(atPath: socket)
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: socket), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        for key in keys {
+            let add = Process()
+            add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+            add.arguments = [Self.keys.appending(component: key).path]
+            add.environment = ["SSH_AUTH_SOCK": socket]
+            add.standardOutput = FileHandle.nullDevice
+            add.standardError = FileHandle.nullDevice
+            try add.run()
+            add.waitUntilExit()
+            XCTAssertEqual(add.terminationStatus, 0, "ssh-add \(key) failed")
+        }
+        return SSHAgent(socketPath: socket)
+    }
+
+    private func agentClient(_ agent: SSHAgent, key: String? = nil, password: String = "") -> SFTPClient {
+        var connection = connection(key: key)
+        connection.useSSHAgent = true
+        return SFTPClient(
+            connection: connection, password: password,
+            hostKeyStore: SSHHostKeyStore(storeURL: nil),
+            onUnknownHostKey: { _, _, _ in true },
+            agent: agent
+        )
+    }
+
+    func test_agentKey_ed25519_logsIn() async throws {
+        try requireServers()
+        try await assertLogsIn(agentClient(try startAgent(holding: ["ed25519"])))
+    }
+
+    func test_agentKey_ecdsa_allThreeCurves_logIn() async throws {
+        try requireServers()
+        for key in ["ecdsa256", "ecdsa384", "ecdsa521"] {
+            try await assertLogsIn(agentClient(try startAgent(holding: [key])))
+        }
+    }
+
+    func test_agentKey_rsa_logsIn_onAServerThatStillAcceptsSHA1() async throws {
+        try requireServers()
+        try await assertLogsIn(agentClient(try startAgent(holding: ["rsa"])))
+    }
+
+    /// The right key isn't first in the agent: earlier ones are refused and
+    /// the sequence moves on.
+    func test_agentTriesEachKeyUntilOneIsAccepted() async throws {
+        try requireServers()
+        try await assertLogsIn(agentClient(try startAgent(holding: ["unauthorised", "ecdsa256"])))
+    }
+
+    func test_agentWithNoAcceptedKey_fallsBackToThePassword() async throws {
+        try requireServers()
+        try await assertLogsIn(agentClient(try startAgent(holding: ["unauthorised"]), password: "testpass"))
+    }
+
+    func test_agentEnabledButItsSocketIsGone_stillLogsInWithThePassword() async throws {
+        try requireServers()
+        try await assertLogsIn(agentClient(SSHAgent(socketPath: "/tmp/tp-it-agent-gone.sock"), password: "testpass"))
+    }
+
+    func test_agentOff_itsKeysAreNotOffered() async throws {
+        try requireServers()
+        let agent = try startAgent(holding: ["ed25519"])
+        // Agent holds a valid key, but the connection hasn't opted in.
+        let client = SFTPClient(
+            connection: connection(key: nil), password: "wrong-password",
+            hostKeyStore: SSHHostKeyStore(storeURL: nil),
+            onUnknownHostKey: { _, _, _ in true },
+            agent: agent
+        )
+        do {
+            try await client.connect()
+            XCTFail("Agent keys must not be used unless the connection enables the agent")
+        } catch RemoteClientError.authenticationFailed {
+            // expected
+        }
+    }
 }
 
 final class Recorder: @unchecked Sendable {

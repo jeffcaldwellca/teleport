@@ -84,8 +84,11 @@ passphrase (asked at most three times). Returning nil cancels the connect.
   `signature(for:)` asks the agent. Key and signature bodies are passed
   through verbatim, so one generic type covers ed25519 and the three ECDSA
   curves. RSA agent keys are offered last, with the SHA-1 caveat above.
-- A single `NIOSSHClientUserAuthenticationDelegate` runs the whole sequence,
-  offering one credential each time the server asks:
+- Credentials are tried in order, one per connection attempt, moving on when
+  the server rejects one. (As built: Citadel consults a custom authentication
+  delegate only once per connection, so the sequence can't run inside a
+  single connection as first designed. The usual case — the first key is
+  accepted — still costs one connection.) The order:
   1. agent keys, when the agent is enabled (at most 5, to stay under the
      server's `MaxAuthTries`);
   2. the configured key file, if any;

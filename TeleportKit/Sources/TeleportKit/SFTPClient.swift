@@ -19,6 +19,7 @@ public actor SFTPClient: RemoteClient {
     private let keyReader: @Sendable (URL) async throws -> Data
     private let onUnknownHostKey: @Sendable (String, Int, String) async -> Bool
     private let passphraseProvider: @Sendable (String, Bool) async -> String?
+    private let agent: SSHAgent?
 
     private var ssh: SSHClient?
     private var sftp: Citadel.SFTPClient?
@@ -39,15 +40,19 @@ public actor SFTPClient: RemoteClient {
     ///   - passphraseProvider: asked for the passphrase of an encrypted key
     ///     file (key path, is-this-a-retry-after-a-wrong-one) → passphrase, or
     ///     nil to give up. Defaults to nil: encrypted keys fail closed.
+    ///   - agent: the ssh-agent to take keys from when the connection has
+    ///     `useSSHAgent` on. Defaults to the one in `SSH_AUTH_SOCK`.
     public init(
         connection: Connection,
         password: String,
         hostKeyStore: SSHHostKeyStore = .shared,
         keyReader: @escaping @Sendable (URL) async throws -> Data = { url in try Data(contentsOf: url) },
         onUnknownHostKey: @escaping @Sendable (String, Int, String) async -> Bool = { _, _, _ in false },
-        passphraseProvider: @escaping @Sendable (String, Bool) async -> String? = { _, _ in nil }
+        passphraseProvider: @escaping @Sendable (String, Bool) async -> String? = { _, _ in nil },
+        agent: SSHAgent? = .fromEnvironment
     ) {
         self.passphraseProvider = passphraseProvider
+        self.agent = agent
         self.connection = connection
         self.password   = password
         self.hostKeyStore = hostKeyStore
@@ -72,9 +77,6 @@ public actor SFTPClient: RemoteClient {
         if ssh != nil || sftp != nil { await disconnect() }
 
         let offers = try await buildOffers()
-        let authMethod = SSHAuthenticationMethod.custom(
-            SSHAuthSequence(username: connection.username, offers: offers)
-        )
 
         // Host-key validation:
         //   1. Look up any previously-trusted fingerprint for this host:port.
@@ -88,23 +90,36 @@ public actor SFTPClient: RemoteClient {
         }
         let validator = CapturingHostKeyValidator(expected: expected)
 
-        let client: SSHClient
-        do {
-            client = try await SSHClient.connect(
-                host: connection.host,
-                port: connection.port,
-                authenticationMethod: authMethod,
-                hostKeyValidator: .custom(validator),
-                reconnect: .never
-            )
-        } catch let mismatch as HostKeyMismatchError {
-            throw RemoteClientError.hostKeyMismatch(
-                host: connection.host, port: connection.port,
-                expected: mismatch.expected, actual: mismatch.actual
-            )
-        } catch {
-            throw translateConnectFailure(error)
+        // One credential per connection attempt, moving on when the server
+        // rejects it. Offering them all on a single connection would be
+        // cheaper, but Citadel consults a custom authentication delegate only
+        // once per connection. The server closes a connection whose
+        // authentication failed, so nothing is left behind.
+        var connected: SSHClient?
+        for (index, offer) in offers.enumerated() {
+            do {
+                connected = try await SSHClient.connect(
+                    host: connection.host,
+                    port: connection.port,
+                    authenticationMethod: .custom(SSHAuthSequence(username: connection.username, offers: [offer])),
+                    hostKeyValidator: .custom(validator),
+                    reconnect: .never
+                )
+                break
+            } catch let mismatch as HostKeyMismatchError {
+                throw RemoteClientError.hostKeyMismatch(
+                    host: connection.host, port: connection.port,
+                    expected: mismatch.expected, actual: mismatch.actual
+                )
+            } catch {
+                let failure = translateConnectFailure(error)
+                if case RemoteClientError.authenticationFailed = failure, index < offers.count - 1 {
+                    continue   // rejected: try the next credential
+                }
+                throw failure
+            }
         }
+        guard let client = connected else { throw RemoteClientError.authenticationFailed }
         ssh = client
 
         do {
@@ -186,16 +201,30 @@ public actor SFTPClient: RemoteClient {
         }
     }
 
-    /// The credentials to offer, in order.
+    /// Agent keys offered per connection. Servers allow only a few tries
+    /// (OpenSSH's `MaxAuthTries` defaults to 6) and one must be left for the
+    /// key file or password that follows.
+    private static let agentKeyLimit = 5
+
+    /// The credentials to offer, in the order `ssh` uses: agent keys, then
+    /// the key file, then the password.
     private func buildOffers() async throws -> [NIOSSHUserAuthenticationOffer.Offer] {
+        var offers: [NIOSSHUserAuthenticationOffer.Offer] = []
+        if connection.useSSHAgent, let agent {
+            // An agent that can't be reached contributes nothing; it doesn't
+            // stop the connection.
+            offers += agent.privateKeys(limit: Self.agentKeyLimit).map { .privateKey(.init(privateKey: $0)) }
+        }
         // If the user configured a key path, the password is never offered.
         // Silently falling back to password auth is dangerous — it leaks
         // whatever string is in the password field over the wire when the
         // user thought they were using a key.
-        guard connection.sshKeyPath.isEmpty else {
-            return [try await keyFileOffer()]
+        if connection.sshKeyPath.isEmpty {
+            offers.append(.password(.init(password: password)))
+        } else {
+            offers.append(try await keyFileOffer())
         }
-        return [.password(.init(password: password))]
+        return offers
     }
 
     /// How many times a passphrase is asked for before giving up.
