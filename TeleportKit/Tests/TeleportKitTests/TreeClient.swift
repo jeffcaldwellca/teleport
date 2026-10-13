@@ -47,7 +47,12 @@ final class TreeClient: RemoteClient, @unchecked Sendable {
         try Data("downloaded".utf8).write(to: localURL)
     }
     func setModifiedDate(_ date: Date, at remotePath: String) async { record("mtime \(remotePath)") }
-    func remoteModifiedDate(at remotePath: String) async -> Date? { nil }
+    /// Exact modification times, as MDTM / stat would report them.
+    var preciseTimes: [String: Date] = [:]
+    func remoteModifiedDate(at remotePath: String) async -> Date? {
+        record("mdtm \(remotePath)")
+        return preciseTimes[remotePath]
+    }
 
     func connect() async throws {}
     func disconnect() async {}

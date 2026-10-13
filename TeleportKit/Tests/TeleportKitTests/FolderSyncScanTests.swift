@@ -124,4 +124,46 @@ final class FolderSyncScanTests: XCTestCase {
             XCTAssertEqual(error as? FolderSyncError, .tooLarge(limit: 2))
         }
     }
+
+    // MARK: - Refining "newer" against imprecise listings
+
+    /// FTP `LIST` gives times to the minute, in the server's own time zone.
+    /// A file that merely *looks* older there is checked against the exact
+    /// time before it is sent again — otherwise recently edited files would
+    /// be re-uploaded on every run.
+    func test_refine_dropsTransfersTheExactServerTimeShowsAreNotNewer() async throws {
+        let edited = Date(timeIntervalSince1970: 1_700_003_600)
+        let local = [SyncEntry(relativePath: "a.css", isDirectory: false, size: 10, modified: edited),
+                     SyncEntry(relativePath: "b.css", isDirectory: false, size: 10, modified: edited)]
+        // The listing shows both five hours "older" (a server five time zones away), to the minute.
+        let listed = Date(timeIntervalSince1970: 1_700_003_600 - 5 * 3600)
+        let remote = [SyncEntry(relativePath: "a.css", isDirectory: false, size: 10, modified: listed, modifiedHasSeconds: false),
+                      SyncEntry(relativePath: "b.css", isDirectory: false, size: 10, modified: listed, modifiedHasSeconds: false)]
+        let plan = try FolderSync.plan(local: local, remote: remote, direction: .upload)
+        XCTAssertEqual(plan.transfers.map(\.relativePath), ["a.css", "b.css"])
+
+        let client = TreeClient()
+        client.preciseTimes = ["/site/a.css": edited.addingTimeInterval(30),      // really uploaded after the edit
+                               "/site/b.css": edited.addingTimeInterval(-600)]    // really older
+
+        let refined = await FolderSync.refine(plan, local: local, remote: remote, remoteRoot: "/site", client: client)
+
+        XCTAssertEqual(refined.transfers.map(\.relativePath), ["b.css"])
+    }
+
+    func test_refine_leavesPreciseListingsAndOtherReasonsAlone_withoutAskingTheServer() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_045)
+        let local = [SyncEntry(relativePath: "newer.css", isDirectory: false, size: 10, modified: now.addingTimeInterval(100)),
+                     SyncEntry(relativePath: "bigger.css", isDirectory: false, size: 20, modified: now),
+                     SyncEntry(relativePath: "new.css", isDirectory: false, size: 5, modified: now)]
+        let remote = [SyncEntry(relativePath: "newer.css", isDirectory: false, size: 10, modified: now),
+                      SyncEntry(relativePath: "bigger.css", isDirectory: false, size: 10, modified: now)]
+        let plan = try FolderSync.plan(local: local, remote: remote, direction: .upload)
+        let client = TreeClient()
+
+        let refined = await FolderSync.refine(plan, local: local, remote: remote, remoteRoot: "/site", client: client)
+
+        XCTAssertEqual(refined, plan)
+        XCTAssertTrue(client.calls.isEmpty, "\(client.calls)")
+    }
 }

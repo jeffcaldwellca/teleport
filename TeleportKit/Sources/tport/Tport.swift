@@ -10,6 +10,7 @@ struct Tport: AsyncParsableCommand {
             StatCommand.self,
             GetCommand.self,
             PutCommand.self,
+            SyncCommand.self,
             MkdirCommand.self,
             RmCommand.self,
             MvCommand.self,

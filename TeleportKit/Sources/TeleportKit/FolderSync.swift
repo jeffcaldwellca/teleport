@@ -219,6 +219,73 @@ public enum FolderSync {
         return depthA != depthB ? depthA > depthB : a.relativePath < b.relativePath
     }
 
+    // MARK: - Comparing two folders
+
+    public struct Comparison: Sendable {
+        public let local: [SyncEntry]
+        public let remote: [SyncEntry]
+        public let plan: SyncPlan
+    }
+
+    /// Scan both folders and work out what syncing them would do. Changes
+    /// nothing on either side.
+    ///
+    /// The source must exist; a destination that doesn't is simply empty (it
+    /// is created when the plan is carried out).
+    public static func compare(
+        localRoot: URL, remoteRoot: String, client: RemoteClient,
+        direction: SyncDirection, options: SyncOptions = SyncOptions(), limit: Int = defaultLimit
+    ) async throws -> Comparison {
+        let local = try scanLocal(localRoot, excludes: options.excludes, limit: limit,
+                                  missingRootIsEmpty: direction == .download)
+        let remote = try await scanRemote(client, root: remoteRoot, excludes: options.excludes, limit: limit,
+                                          missingRootIsEmpty: direction == .upload)
+        let rough = try plan(local: local, remote: remote, direction: direction, options: options)
+        let refined = options.sizeOnly
+            ? rough
+            : await refine(rough, local: local, remote: remote, remoteRoot: remoteRoot, client: client)
+        return Comparison(local: local, remote: remote, plan: refined)
+    }
+
+    // MARK: - Refining
+
+    /// Double-check transfers planned only because the source "looks newer"
+    /// than a remote file whose listed time is imprecise.
+    ///
+    /// FTP `LIST` reports times to the minute and in the server's own time
+    /// zone, so the listing can show a file hours older than it is. For those
+    /// files the exact time is fetched (`MDTM`); the ones that turn out not to
+    /// be older are dropped from the plan. Listings with exact times (SFTP,
+    /// MLSD) and transfers planned for any other reason cost nothing here.
+    public static func refine(
+        _ plan: SyncPlan, local: [SyncEntry], remote: [SyncEntry], remoteRoot: String, client: RemoteClient
+    ) async -> SyncPlan {
+        let localByPath = Dictionary(local.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
+        let remoteByPath = Dictionary(remote.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
+        var refined = plan
+        refined.actions = []
+        for action in plan.actions {
+            guard action.kind == .transfer, action.reason == "newer",
+                  let listed = remoteByPath[action.relativePath], !listed.modifiedHasSeconds,
+                  let localTime = localByPath[action.relativePath]?.modified,
+                  let exact = await client.remoteModifiedDate(at: joined(remoteRoot, action.relativePath)) else {
+                refined.actions.append(action)
+                continue
+            }
+            let sourceTime = plan.direction == .upload ? localTime : exact
+            let destinationTime = plan.direction == .upload ? exact : localTime
+            if sourceTime.timeIntervalSince(destinationTime) > tolerance {
+                refined.actions.append(action)
+            }
+        }
+        return refined
+    }
+
+    /// The remote path of `relativePath` under `root`.
+    public static func joined(_ root: String, _ relativePath: String) -> String {
+        relativePath.split(separator: "/").reduce(root) { RemotePath.join($0, String($1)) }
+    }
+
     // MARK: - Scanning
 
     // Both scanners report an excluded item but never look inside it: the
