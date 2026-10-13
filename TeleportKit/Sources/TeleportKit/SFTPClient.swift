@@ -7,6 +7,7 @@ import CryptoKit
 import Citadel
 import NIOCore
 import NIOPosix
+import NIOSSH
 import Darwin
 
 public actor SFTPClient: RemoteClient {
@@ -98,30 +99,15 @@ public actor SFTPClient: RemoteClient {
     /// First contact with a host: learn its key and ask `onUnknownHostKey`
     /// whether to trust it, returning the fingerprint to pin.
     ///
-    /// The key is captured by a throwaway connection whose validator refuses
-    /// the handshake, so it ends during key exchange — before user
-    /// authentication — and carries no real credentials. Asking only after a
-    /// full connect would hand the password to a server nobody has vouched for.
+    /// Asking only after a full connect would hand the password to a server
+    /// nobody has vouched for, so the key is fetched by `HostKeyProbe` — a
+    /// bare key exchange that carries no credentials and never authenticates.
     private func confirmUnknownHostKey() async throws -> String {
-        let probe = CapturingHostKeyValidator(expected: nil, rejectUnknown: true)
+        let fingerprint: String
         do {
-            let client = try await SSHClient.connect(
-                host: connection.host,
-                port: connection.port,
-                authenticationMethod: .passwordBased(username: connection.username, password: ""),
-                hostKeyValidator: .custom(probe),
-                reconnect: .never
-            )
-            try? await client.close()   // not expected: the probe refuses every key
+            fingerprint = try await HostKeyProbe.fingerprint(host: connection.host, port: connection.port)
         } catch {
-            // Refusing the key is the expected outcome; anything that failed
-            // before a key was seen (DNS, TCP, …) is a real connect failure.
-            if probe.captured == nil { throw translateConnectFailure(error) }
-        }
-        guard let fingerprint = probe.captured else {
-            throw RemoteClientError.connectionFailed(
-                "\(connection.host):\(connection.port) did not present a host key"
-            )
+            throw translateConnectFailure(error)
         }
 
         guard await onUnknownHostKey(connection.host, connection.port, fingerprint) else {
@@ -455,6 +441,114 @@ public actor SFTPClient: RemoteClient {
         try await sftp.setAttributes(at: absolutePath, to: attrs)
     }
 
+}
+
+// MARK: - Host key probe
+
+/// Fetches a server's host-key fingerprint without logging in: runs the SSH
+/// key exchange on a connection of its own, records the key the server
+/// presents, refuses it, and closes the connection.
+///
+/// Done with SwiftNIO SSH directly rather than through Citadel because
+/// Citadel leaves the TCP connection open when a handshake is refused — each
+/// probe would hold a half-open session until the server's login timeout.
+/// Citadel's default configuration adds no algorithms of its own, so the
+/// probe negotiates the same host key the real connection will see.
+///
+/// All state is confined to the channel's event loop.
+private final class HostKeyProbe: ChannelInboundHandler,
+                                  NIOSSHClientServerAuthenticationDelegate,
+                                  NIOSSHClientUserAuthenticationDelegate,
+                                  @unchecked Sendable {
+    typealias InboundIn = Any
+
+    private static let timeout: TimeAmount = .seconds(30)
+
+    private let result: EventLoopPromise<String>
+    private var finished = false
+
+    private init(result: EventLoopPromise<String>) {
+        self.result = result
+    }
+
+    static func fingerprint(host: String, port: Int) async throws -> String {
+        let loop = MultiThreadedEventLoopGroup.singleton.any()
+        let probe = HostKeyProbe(result: loop.makePromise(of: String.self))
+
+        let channel: Channel
+        do {
+            channel = try await connect(probe, host: host, port: port, on: loop)
+        } catch {
+            // Never reached a server: settle the promise so it isn't leaked.
+            loop.execute { probe.finish(.failure(error)) }
+            throw error
+        }
+
+        // A server that accepts the connection but never sends a key.
+        let deadline = loop.scheduleTask(in: timeout) {
+            probe.finish(.failure(RemoteClientError.connectionFailed(
+                "\(host):\(port) did not present an SSH host key"
+            )))
+        }
+        defer {
+            deadline.cancel()
+            channel.close(promise: nil)
+        }
+        return try await probe.result.futureResult.get()
+    }
+
+    private static func connect(
+        _ probe: HostKeyProbe, host: String, port: Int, on loop: EventLoop
+    ) async throws -> Channel {
+        try await ClientBootstrap(group: loop)
+            .connectTimeout(timeout)
+            .channelInitializer { channel in
+                channel.eventLoop.makeCompletedFuture {
+                    let configuration = SSHClientConfiguration(
+                        userAuthDelegate: probe, serverAuthDelegate: probe
+                    )
+                    try channel.pipeline.syncOperations.addHandlers(
+                        NIOSSHHandler(role: .client(configuration),
+                                      allocator: channel.allocator,
+                                      inboundChildChannelInitializer: nil),
+                        probe
+                    )
+                }
+            }
+            .connect(host: host, port: port)
+            .get()
+    }
+
+    private func finish(_ outcome: Result<String, Error>) {
+        guard !finished else { return }
+        finished = true
+        result.completeWith(outcome)
+    }
+
+    // Key exchange reached the host key: record it and go no further.
+    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let fingerprint = SSHKeyFingerprint.sha256(of: hostKey)
+        finish(.success(fingerprint))
+        validationCompletePromise.fail(UnknownHostKeyError(fingerprint: fingerprint))
+    }
+
+    // Never reached (the key is always refused); offer nothing regardless.
+    func nextAuthenticationType(
+        availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+        nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
+    ) {
+        nextChallengePromise.succeed(nil)
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        finish(.failure(error))
+        context.close(promise: nil)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        finish(.failure(RemoteClientError.connectionFailed("the server closed the connection during the SSH handshake")))
+        context.fireChannelInactive()
+    }
 }
 
 // MARK: - SFTPFileAttributes helpers

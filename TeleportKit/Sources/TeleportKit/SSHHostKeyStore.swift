@@ -112,7 +112,7 @@ public actor SSHHostKeyStore {
         ) else { return nil }
         let dir = support.appending(component: "Teleport")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appending(component: "known_hosts.json")
+        return dir.appending(component: file)
     }
 
     private func decodeFile(at url: URL) -> File? {
@@ -191,31 +191,24 @@ public enum SSHKeyFingerprint {
 // MARK: - Validator
 
 /// `NIOSSHClientServerAuthenticationDelegate` that:
-///   * captures the server's host-key fingerprint synchronously,
-///   * fails the handshake if a previously-trusted fingerprint doesn't match, and
-///   * with `rejectUnknown`, fails it for a host with no trusted fingerprint.
+///   * captures the server's host-key fingerprint synchronously, and
+///   * fails the handshake if a previously-trusted fingerprint doesn't match.
 ///
 /// First-use confirmation is *not* done here — that requires a trust decision
 /// (a UI dialog for the GUI, a flag check for the CLI). `SFTPClient.connect`
-/// first runs a throwaway `rejectUnknown` connection, which ends in key
-/// exchange with the fingerprint captured and nothing authenticated, asks its
-/// `onUnknownHostKey` closure, and only then connects for real with the
-/// approved fingerprint as `expected`.
+/// first fetches an unknown host's fingerprint with a credential-free key
+/// exchange, asks its `onUnknownHostKey` closure, and only then connects for
+/// real with the approved fingerprint as `expected`.
 public final class CapturingHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
 
     /// Set when constructed for a known-host connection. Mismatch → handshake fails.
     public let expected: String?
 
-    /// Refuse the handshake when there is no `expected` fingerprint, instead
-    /// of letting an unvetted host proceed to authentication.
-    public let rejectUnknown: Bool
-
     private let lock = NSLock()
     private var _captured: String?
 
-    public init(expected: String? = nil, rejectUnknown: Bool = false) {
+    public init(expected: String? = nil) {
         self.expected = expected
-        self.rejectUnknown = rejectUnknown
     }
 
     /// Fingerprint captured during the handshake (if any).
@@ -236,15 +229,12 @@ public final class CapturingHostKeyValidator: NIOSSHClientServerAuthenticationDe
             ))
             return
         }
-        if expected == nil, rejectUnknown {
-            validationCompletePromise.fail(UnknownHostKeyError(fingerprint: fingerprint))
-            return
-        }
         validationCompletePromise.succeed(())
     }
 }
 
-/// Fails a `rejectUnknown` handshake: the host's key isn't trusted yet.
+/// Why a first-contact key exchange was abandoned: the host's key isn't
+/// trusted yet.
 public struct UnknownHostKeyError: Error {
     public let fingerprint: String
 }
