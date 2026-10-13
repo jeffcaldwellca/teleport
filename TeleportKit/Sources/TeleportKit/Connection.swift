@@ -11,6 +11,8 @@ public struct Connection: Identifiable, Codable, Hashable {
     public var sshKeyPath: String = ""
     public var notes: String = ""
     public var createdAt: Date = Date()
+    /// SFTP only: offer keys held by ssh-agent before the key file / password.
+    public var useSSHAgent: Bool = false
 
     public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable {
         case ftp  = "FTP"
@@ -54,6 +56,23 @@ public struct Connection: Identifiable, Codable, Hashable {
         self.initialPath        = initialPath
         self.sshKeyPath         = sshKeyPath
         self.notes              = notes
+    }
+
+    /// Hand-written so connections saved before a property existed still
+    /// load: anything added after 1.0 is read with a fallback.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id                 = try container.decode(UUID.self, forKey: .id)
+        name               = try container.decode(String.self, forKey: .name)
+        host               = try container.decode(String.self, forKey: .host)
+        port               = try container.decode(Int.self, forKey: .port)
+        username           = try container.decode(String.self, forKey: .username)
+        connectionProtocol = try container.decode(ConnectionProtocol.self, forKey: .connectionProtocol)
+        initialPath        = try container.decode(String.self, forKey: .initialPath)
+        sshKeyPath         = try container.decode(String.self, forKey: .sshKeyPath)
+        notes              = try container.decode(String.self, forKey: .notes)
+        createdAt          = try container.decode(Date.self, forKey: .createdAt)
+        useSSHAgent        = try container.decodeIfPresent(Bool.self, forKey: .useSSHAgent) ?? false
     }
 
     public var displayTitle: String {

@@ -2,12 +2,13 @@ import NIOCore
 import NIOSSH
 import Citadel
 
-/// Offers a fixed list of credentials to the server, one per round, in order
-/// — the way `ssh` works through agent keys, identity files and then a
-/// password. Citadel's built-in methods each offer a single credential.
+/// Offers credentials to the server in order, one per authentication round,
+/// skipping kinds the server says it won't accept.
 ///
-/// SwiftNIO SSH calls this on the connection's event loop, once at the start
-/// and again after every rejected offer.
+/// SwiftNIO SSH asks again after every rejected offer, but Citadel's wrapper
+/// passes only the first request through to a custom delegate — so in
+/// practice `SFTPClient` gives each connection attempt a single offer and
+/// walks the list itself.
 final class SSHAuthSequence: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
     private let username: String
     private var remaining: [NIOSSHUserAuthenticationOffer.Offer]
