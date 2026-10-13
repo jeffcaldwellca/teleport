@@ -20,7 +20,7 @@ final class SSHConfigImportTests: XCTestCase {
         let added = store.importHosts([
             SSHConfig.Host(alias: "web", hostName: "web01.example.com", user: "deploy", port: 2202,
                            identityFile: "/Users/me/.ssh/deploy"),
-        ])
+        ], fileExists: { _ in true })
 
         XCTAssertEqual(added, 1)
         let connection = store.connections[0]
@@ -30,12 +30,35 @@ final class SSHConfigImportTests: XCTestCase {
         XCTAssertEqual(connection.username, "deploy")
         XCTAssertEqual(connection.connectionProtocol, .sftp)
         XCTAssertEqual(connection.sshKeyPath, "/Users/me/.ssh/deploy")
-        XCTAssertFalse(connection.useSSHAgent)
+    }
+
+    /// `ssh` tries the agent before any IdentityFile. A config with
+    /// `Host *` / `IdentityFile ~/.ssh/id_ed25519` (the usual macOS setup,
+    /// with the passphrase in the agent) must not turn into a passphrase
+    /// prompt on every imported host.
+    func test_import_alwaysTurnsTheAgentOn_evenWithAnIdentityFile() {
+        store.importHosts([
+            SSHConfig.Host(alias: "web", hostName: "web01.example.com", identityFile: "/Users/me/.ssh/id_ed25519"),
+        ], fileExists: { _ in true })
+
+        XCTAssertTrue(store.connections[0].useSSHAgent)
+        XCTAssertEqual(store.connections[0].sshKeyPath, "/Users/me/.ssh/id_ed25519")
+    }
+
+    /// An IdentityFile that isn't there (or still has unexpanded `%` tokens)
+    /// would make the connection fail outright with nothing to fall back on.
+    func test_import_identityFileThatDoesNotExist_isLeftOut() {
+        store.importHosts([
+            SSHConfig.Host(alias: "web", hostName: "web01.example.com", identityFile: "/Users/me/.ssh/%h_key"),
+        ], fileExists: { _ in false })
+
+        XCTAssertEqual(store.connections[0].sshKeyPath, "")
+        XCTAssertTrue(store.connections[0].useSSHAgent)
     }
 
     /// No IdentityFile means `ssh` would be relying on the agent (or default
     /// keys); the imported connection does the same.
-    func test_import_withoutAnIdentityFile_turnsTheAgentOn_andDefaultsUserAndPort() {
+    func test_import_withoutAnIdentityFile_defaultsUserAndPort() {
         store.importHosts([SSHConfig.Host(alias: "db", hostName: "db.internal")])
 
         let connection = store.connections[0]

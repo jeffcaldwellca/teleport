@@ -27,10 +27,16 @@ final class ConnectionStore {
     /// Add an SFTP connection for each host not already saved. Returns how
     /// many were added.
     @discardableResult
-    func importHosts(_ hosts: [SSHConfig.Host]) -> Int {
+    func importHosts(
+        _ hosts: [SSHConfig.Host],
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> Int {
         var added = 0
         for host in hosts where !isSaved(host) {
-            connections.append(Self.connection(for: host))
+            var connection = Self.connection(for: host)
+            // A key file that isn't there would fail the connection outright.
+            if !fileExists(connection.sshKeyPath) { connection.sshKeyPath = "" }
+            connections.append(connection)
             added += 1
         }
         if added > 0 { persist() }
@@ -46,9 +52,9 @@ final class ConnectionStore {
             connectionProtocol: .sftp,
             sshKeyPath: host.identityFile ?? ""
         )
-        // With no IdentityFile, ssh would be using the agent (or its default
-        // keys); do the same rather than import a connection with no way in.
-        connection.useSSHAgent = host.identityFile == nil
+        // ssh tries the agent before any IdentityFile, and on macOS the key's
+        // passphrase usually lives there — so the agent is on either way.
+        connection.useSSHAgent = true
         return connection
     }
 

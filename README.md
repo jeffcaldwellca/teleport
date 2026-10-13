@@ -30,7 +30,7 @@ app that feels like one.
 - **`tport`**, a scriptable CLI, bundled with the app and installable from Settings
 - **Resume &amp; conflict handling** — interrupted transfers pick up where they left off, with overwrite/skip/if-newer policies
 - **Transfer queue** for tracking multiple in-flight uploads and downloads
-- **Saved connections** with Keychain-backed credential storage
+- **Saved connections** with Keychain-backed credential storage, importable from `~/.ssh/config`
 - **In-place remote file editing** — edit a remote file without a manual download/upload round trip
 - **Permissions editor** for `chmod`-style permission changes from the UI
 - **Native SwiftUI** — built for macOS from the ground up, not a cross-platform wrapper
@@ -56,6 +56,9 @@ tport ls sftp://user@example.com/ --identity ~/.ssh/id_ed25519
 
 # With no key or password given, keys from ssh-agent are used, as with ssh
 tport ls sftp://user@example.com/
+
+# Host aliases from ~/.ssh/config work too (HostName, User, Port, IdentityFile)
+tport ls sftp://my-server/var/www
 
 # Check connectivity and auth only
 tport test sftp://user@example.com
