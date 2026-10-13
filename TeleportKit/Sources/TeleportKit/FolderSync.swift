@@ -219,6 +219,104 @@ public enum FolderSync {
         return depthA != depthB ? depthA > depthB : a.relativePath < b.relativePath
     }
 
+    // MARK: - Scanning
+
+    // Both scanners report an excluded item but never look inside it: the
+    // planner needs to know it is there (to leave it, and the folders above
+    // it, alone) without paying to walk a `node_modules`. Symlinks are
+    // skipped entirely, as in folder transfers — following them risks cycles
+    // and escapes from the tree being synced.
+
+    /// Everything under the local folder `root`.
+    /// - Parameter missingRootIsEmpty: for a destination that will be
+    ///   created. A missing *source* must stay an error: an unmounted volume
+    ///   is not an empty folder.
+    public static func scanLocal(
+        _ root: URL, excludes: [String] = [], limit: Int = defaultLimit, missingRootIsEmpty: Bool = false
+    ) throws -> [SyncEntry] {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            if missingRootIsEmpty { return [] }
+            throw FolderSyncError.sourceMissing(root.path)
+        }
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: []) else {
+            throw FolderSyncError.sourceMissing(root.path)
+        }
+        let patterns = builtInExcludes + excludes
+        let baseCount = root.standardizedFileURL.pathComponents.count
+        var entries: [SyncEntry] = []
+
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            if values?.isSymbolicLink == true {
+                enumerator.skipDescendants()
+                continue
+            }
+            let components = url.standardizedFileURL.pathComponents.dropFirst(baseCount)
+            guard !components.isEmpty, components.allSatisfy({ RemotePath.sanitizedFilename($0) != nil }) else {
+                enumerator.skipDescendants()
+                continue
+            }
+            let relative = components.joined(separator: "/")
+            let isFolder = values?.isDirectory == true
+            entries.append(SyncEntry(
+                relativePath: relative, isDirectory: isFolder,
+                size: isFolder ? nil : (values?.fileSize).map(Int64.init),
+                modified: isFolder ? nil : values?.contentModificationDate
+            ))
+            if entries.count > limit { throw FolderSyncError.tooLarge(limit: limit) }
+            if patterns.contains(where: { matches(exclude: $0, relativePath: relative) }) {
+                enumerator.skipDescendants()
+            }
+        }
+        return entries
+    }
+
+    /// Everything under the remote folder `root`.
+    /// - Parameter missingRootIsEmpty: as for `scanLocal`.
+    public static func scanRemote(
+        _ client: RemoteClient, root: String, excludes: [String] = [],
+        limit: Int = defaultLimit, missingRootIsEmpty: Bool = false
+    ) async throws -> [SyncEntry] {
+        let patterns = builtInExcludes + excludes
+        var entries: [SyncEntry] = []
+        // "/var/www/" and "/var/www" are the same folder; "/" stays "/".
+        let root = root.count > 1 && root.hasSuffix("/") ? String(root.dropLast()) : root
+        var pending: [(remote: String, relative: String)] = [(root, "")]
+        var isRoot = true
+
+        while let (directory, prefix) = pending.popLast() {
+            let items: [FileItem]
+            do {
+                items = try await client.listDirectory(at: directory)
+            } catch {
+                if isRoot, missingRootIsEmpty { return [] }
+                throw error
+            }
+            isRoot = false
+            for item in items where !item.isSymlink {
+                guard let name = RemotePath.sanitizedFilename(item.name) else { continue }
+                let relative = prefix.isEmpty ? name : prefix + "/" + name
+                entries.append(SyncEntry(
+                    relativePath: relative, isDirectory: item.isDirectory,
+                    size: item.isDirectory ? nil : item.size,
+                    modified: item.isDirectory ? nil : item.modifiedDate,
+                    // A time landing exactly on the minute is taken to have no
+                    // seconds (LIST-only FTP servers). Occasionally that is a
+                    // real :00, which only costs a slightly wider tolerance.
+                    modifiedHasSeconds: item.modifiedDate.map { Int($0.timeIntervalSince1970) % 60 != 0 } ?? true
+                ))
+                if entries.count > limit { throw FolderSyncError.tooLarge(limit: limit) }
+                let excluded = patterns.contains { matches(exclude: $0, relativePath: relative) }
+                if item.isDirectory, !excluded {
+                    pending.append((RemotePath.join(directory, name), relative))
+                }
+            }
+        }
+        return entries
+    }
+
     // MARK: - Excludes
 
     /// Whether `pattern` excludes `relativePath` — itself or any folder above
