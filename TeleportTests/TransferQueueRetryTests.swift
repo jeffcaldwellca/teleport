@@ -183,6 +183,36 @@ final class TransferQueueRetryTests: XCTestCase {
                        "Nothing was transferred yet, so there is nothing to resume")
     }
 
+    /// Drives the "transfers finished" notice and the quit warning.
+    func test_queue_reportsUnfinishedWork_thenASummaryOnceItDrains() async throws {
+        let script = ScriptedClient.Script(destinationsExist: false)
+        let queue = TransferQueueViewModel(
+            passwordProvider: { _ in "" },
+            clientFactory: { _, _ in ScriptedClient(script: script) }
+        )
+        var summaries: [TransferQueueViewModel.IdleSummary] = []
+        queue.onIdle = { summaries.append($0) }
+        XCTAssertFalse(queue.hasUnfinishedTransfers)
+
+        let connection = Connection(host: "example.invalid")
+        for index in 1...3 {
+            queue.enqueue(connection: connection, direction: .upload,
+                          localURL: try makeLocalFile(), remotePath: "/idle-\(index).txt")
+        }
+        XCTAssertTrue(queue.hasUnfinishedTransfers)
+
+        try await waitUntil("idle summary") { !summaries.isEmpty }
+        XCTAssertFalse(queue.hasUnfinishedTransfers)
+        XCTAssertEqual(summaries.map(\.completed), [3])
+        XCTAssertEqual(summaries.map(\.failed), [0])
+
+        // A later batch reports only its own work.
+        queue.enqueue(connection: connection, direction: .upload,
+                      localURL: try makeLocalFile(), remotePath: "/idle-4.txt")
+        try await waitUntil("second idle summary") { summaries.count == 2 }
+        XCTAssertEqual(summaries.map(\.completed), [3, 1])
+    }
+
     /// A real site tree (a CMS install, a build output folder) easily runs to
     /// several thousand files; the old 2,000-item cap refused them outright.
     func test_folderUpload_acceptsATreeOfSeveralThousandFiles() async throws {

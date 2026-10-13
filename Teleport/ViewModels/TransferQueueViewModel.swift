@@ -187,8 +187,42 @@ final class TransferQueueViewModel {
         }
     }
 
+    /// What a run of transfers amounted to, reported when the queue drains.
+    struct IdleSummary: Equatable {
+        var completed: Int
+        var failed: Int
+    }
+
+    /// Called each time the last worker finishes with nothing left queued.
+    var onIdle: ((IdleSummary) -> Void)?
+
+    /// Final tasks already counted in an earlier summary.
+    private var summarizedTaskIDs: Set<UUID> = []
+
+    /// Anything not yet finished, paused transfers included — quitting loses them.
+    var hasUnfinishedTransfers: Bool { tasks.contains { !$0.status.isFinal } }
+
+    /// Transfers still queued or running (the Dock badge).
+    var remainingCount: Int {
+        tasks.reduce(0) { $0 + (($1.status.isFinal || $1.status == .paused) ? 0 : 1) }
+    }
+
+    private func reportIdleIfDrained() {
+        guard workerCount == 0, !tasks.contains(where: { $0.status == .queued }) else { return }
+        var summary = IdleSummary(completed: 0, failed: 0)
+        for task in tasks where task.status.isFinal && summarizedTaskIDs.insert(task.id).inserted {
+            if task.status == .completed { summary.completed += 1 }
+            if case .failed = task.status { summary.failed += 1 }
+        }
+        summarizedTaskIDs.formIntersection(Set(tasks.map(\.id)))
+        if summary.completed + summary.failed > 0 { onIdle?(summary) }
+    }
+
     private func workerLoop() async {
-        defer { workerCount -= 1 }
+        defer {
+            workerCount -= 1
+            reportIdleIfDrained()
+        }
         // The connection this worker keeps between tasks, so a run of files
         // for one server costs a single login instead of one per file.
         let kept = KeptConnection()

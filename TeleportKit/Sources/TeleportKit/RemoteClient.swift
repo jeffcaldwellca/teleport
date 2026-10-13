@@ -90,11 +90,11 @@ public enum RemoteClientError: LocalizedError {
         case .transferFailed(let m):  return "Transfer failed: \(m)"
         case .unsupported(let op):    return "\(op) is not supported by this server"
         case .hostKeyUntrusted(let host, let port, let fp):
-            return "Host key for \(host):\(port) was not trusted (fingerprint \(SSHKeyFingerprint.display(fp))). " +
+            return "Host key for \(host):\(port) was not trusted (fingerprint \(SSHKeyFingerprint.openSSH(fp))). " +
                    "Reconnect and choose to trust it if this is expected."
         case .hostKeyMismatch(let host, let port, let expected, let actual):
             return "Host key for \(host):\(port) has changed — possible MITM attack. " +
-                   "Expected \(SSHKeyFingerprint.display(expected)), saw \(SSHKeyFingerprint.display(actual)). " +
+                   "Expected \(SSHKeyFingerprint.openSSH(expected)), saw \(SSHKeyFingerprint.openSSH(actual)). " +
                    "If this change is legitimate (e.g. the server was reinstalled), remove the stored host key and reconnect."
         case .unknown(let m):         return m
         }

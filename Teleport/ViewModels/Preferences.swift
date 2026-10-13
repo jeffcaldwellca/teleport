@@ -95,36 +95,61 @@ final class Preferences {
         }
     }
 
+    // `@Observable` only instruments stored properties, so each of these
+    // defaults-backed computed properties registers with the observation
+    // registrar by hand. Without it, views that display the value (the
+    // Settings stepper label, an open pane) don't re-render when it changes.
+
     var maxConcurrentTransfers: Int {
-        get { max(1, defaults.object(forKey: Keys.maxConcurrentTransfers) as? Int ?? 3) }
-        set { defaults.set(max(1, newValue), forKey: Keys.maxConcurrentTransfers) }
+        get {
+            access(keyPath: \.maxConcurrentTransfers)
+            return max(1, defaults.object(forKey: Keys.maxConcurrentTransfers) as? Int ?? 3)
+        }
+        set {
+            withMutation(keyPath: \.maxConcurrentTransfers) {
+                defaults.set(max(1, newValue), forKey: Keys.maxConcurrentTransfers)
+            }
+        }
     }
 
     var defaultConflict: DefaultConflict {
         get {
-            DefaultConflict(rawValue: defaults.string(forKey: Keys.defaultConflict) ?? "") ?? .ask
+            access(keyPath: \.defaultConflict)
+            return DefaultConflict(rawValue: defaults.string(forKey: Keys.defaultConflict) ?? "") ?? .ask
         }
-        set { defaults.set(newValue.rawValue, forKey: Keys.defaultConflict) }
+        set {
+            withMutation(keyPath: \.defaultConflict) {
+                defaults.set(newValue.rawValue, forKey: Keys.defaultConflict)
+            }
+        }
     }
 
     var showHiddenByDefault: Bool {
-        get { defaults.bool(forKey: Keys.showHiddenByDefault) }
-        set { defaults.set(newValue, forKey: Keys.showHiddenByDefault) }
+        get {
+            access(keyPath: \.showHiddenByDefault)
+            return defaults.bool(forKey: Keys.showHiddenByDefault)
+        }
+        set {
+            withMutation(keyPath: \.showHiddenByDefault) {
+                defaults.set(newValue, forKey: Keys.showHiddenByDefault)
+            }
+        }
     }
 
     var downloadDestination: DownloadDestinationChoice {
         get {
-            DownloadDestinationChoice(
+            access(keyPath: \.downloadDestination)
+            return DownloadDestinationChoice(
                 rawValue: defaults.string(forKey: Keys.downloadDestination) ?? ""
             ) ?? .localPane
         }
-        set { defaults.set(newValue.rawValue, forKey: Keys.downloadDestination) }
+        set {
+            withMutation(keyPath: \.downloadDestination) {
+                defaults.set(newValue.rawValue, forKey: Keys.downloadDestination)
+            }
+        }
     }
 
-    /// The browser panes read this inside `body` and must re-render when it
-    /// changes. `@Observable` only instruments stored properties, so this
-    /// defaults-backed computed property registers with the observation
-    /// registrar by hand.
     var fileListTextSize: FileListTextSize {
         get {
             access(keyPath: \.fileListTextSize)

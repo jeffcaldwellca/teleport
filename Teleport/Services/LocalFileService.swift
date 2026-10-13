@@ -7,12 +7,13 @@ final class LocalFileService {
     static let shared = LocalFileService()
     private let fm = FileManager.default
 
-    func listDirectory(at url: URL) throws -> [FileItem] {
-        let contents = try fm.contentsOfDirectory(
+    /// Static and self-contained so it can run off the main actor.
+    static func listDirectory(at url: URL) throws -> [FileItem] {
+        let contents = try FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [
                 .isDirectoryKey, .fileSizeKey, .contentModificationDateKey,
-                .isSymbolicLinkKey, .fileResourceIdentifierKey
+                .isSymbolicLinkKey
             ],
             options: []
         )

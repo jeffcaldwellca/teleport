@@ -32,7 +32,11 @@ struct HostKeyConfirmationSheet: View {
                 Text("Fingerprint")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(SSHKeyFingerprint.display(request.fingerprint))
+                // Each in the form its own tooling prints, so it can be
+                // compared by eye: `ssh-keygen -lf` / `openssl x509 -fingerprint`.
+                Text(request.certificateReason == nil
+                     ? SSHKeyFingerprint.openSSH(request.fingerprint)
+                     : SSHKeyFingerprint.display(request.fingerprint))
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .padding(8)
