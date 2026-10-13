@@ -19,6 +19,25 @@ public struct FileItem: Identifiable, Hashable {
 
     public var isHidden: Bool { name.hasPrefix(".") }
 
+    /// `permissions` as nine `rwx` characters, whichever form the server sent it in.
+    /// FTP `LIST` sends `-rw-r--r--`, MLSD an octal `unix.mode` like `644`, and
+    /// SFTP the full mode including file-type bits (`100644`).
+    public var displayPermissions: String? {
+        guard let permissions else { return nil }
+        let symbols = Set("rwx-sStT")
+        if permissions.count == 10, permissions.dropFirst().allSatisfy(symbols.contains) {
+            return String(permissions.dropFirst())
+        }
+        if permissions.count == 9, permissions.allSatisfy(symbols.contains) {
+            return permissions
+        }
+        guard let mode = UInt32(permissions, radix: 8) else { return nil }
+        return (0..<9).map { bit -> String in
+            let isSet = mode & (0o400 >> UInt32(bit)) != 0
+            return isSet ? ["r", "w", "x"][bit % 3] : "-"
+        }.joined()
+    }
+
     public var displaySize: String {
         guard !isDirectory, let size = size else { return isDirectory ? "—" : "" }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
