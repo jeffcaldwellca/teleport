@@ -70,7 +70,11 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func contextMenu(for conn: Connection) -> some View {
-        Button("Connect") { Task { await appState.openSession(for: conn) } }
+        Button(appState.sessions(for: conn).isEmpty ? "Connect" : "Switch to Session") {
+            Task { await appState.openSession(for: conn) }
+        }
+        Button("Open in New Tab") { Task { await appState.openNewSession(for: conn) } }
+            .help("Open another session to this server alongside the ones already open")
         Divider()
         Button("Edit…") {
             appState.editingConnection     = conn
@@ -137,6 +141,15 @@ struct SidebarView: View {
                     .controlSize(.small)
                     .help("Connect to \(conn.displayTitle) (⏎)")
             }
+            if appState.activeSession != nil, let conn = connectableSelection {
+                // With a session on screen, the highlighted favourite can
+                // still be opened next to it.
+                Button(appState.sessions(for: conn).isEmpty ? "Connect" : "Switch") {
+                    Task { await appState.openSession(for: conn) }
+                }
+                .controlSize(.small)
+                .help("Open \(conn.displayTitle) alongside the current session (⏎)")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -168,12 +181,13 @@ struct ConnectionRowView: View {
 
             Spacer()
 
-            if appState.activeSession?.connection.id == connection.id {
-                if appState.activeSession?.isConnecting == true {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Circle().fill(.green).frame(width: 7, height: 7)
-                }
+            // Any open session to this favourite, not just the one on screen.
+            let open = appState.sessions(for: connection)
+            if open.contains(where: \.isConnecting) {
+                ProgressView().controlSize(.small)
+            } else if !open.isEmpty {
+                Circle().fill(.green).frame(width: 7, height: 7)
+                    .accessibilityLabel(open.count == 1 ? "Connected" : "\(open.count) sessions open")
             }
         }
         .padding(.vertical, 2)

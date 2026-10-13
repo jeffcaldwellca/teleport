@@ -96,6 +96,25 @@ struct TeleportCommands: Commands {
             .keyboardShortcut(.tab, modifiers: .control)
         }
 
+        CommandMenu("Session") {
+            Button("Next Session") {
+                NotificationCenter.default.post(name: .sessionNext, object: nil)
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+
+            Button("Previous Session") {
+                NotificationCenter.default.post(name: .sessionPrevious, object: nil)
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Close Session") {
+                NotificationCenter.default.post(name: .sessionClose, object: nil)
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+        }
+
         CommandMenu("View") {
             Button("Toggle Hidden Files") {
                 NotificationCenter.default.post(name: .browserToggleHidden, object: nil)
@@ -119,6 +138,9 @@ extension Notification.Name {
     static let browserGoToFolder   = Notification.Name("com.teleport.browser.goToFolder")
     static let browserToggleHidden = Notification.Name("com.teleport.browser.toggleHidden")
     static let toggleTransferQueue = Notification.Name("com.teleport.queue.toggle")
+    static let sessionNext         = Notification.Name("com.teleport.session.next")
+    static let sessionPrevious     = Notification.Name("com.teleport.session.previous")
+    static let sessionClose        = Notification.Name("com.teleport.session.close")
     static let switchPane          = Notification.Name("com.teleport.switchPane")
     static let transferCompleted   = Notification.Name("com.teleport.transferCompleted")
     static let localRootChanged    = Notification.Name("com.teleport.localRootChanged")

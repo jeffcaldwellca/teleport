@@ -24,7 +24,7 @@ struct MainToolbarContent: ToolbarContent {
                 } label: {
                     Label("Disconnect", systemImage: "bolt.slash")
                 }
-                .help("Disconnect from \(session.connection.host)")
+                .help("Disconnect from \(appState.title(for: session)) (⇧⌘W)")
             }
 
             Button {
