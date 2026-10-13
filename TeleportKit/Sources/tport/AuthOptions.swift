@@ -19,6 +19,12 @@ struct AuthOptions: ParsableArguments {
     @Flag(name: .long, help: "Trust and save an unknown SSH host key instead of failing closed.")
     var acceptNewHostkey = false
 
+    @Option(name: .long, help: "Path to the trusted FTPS certificates file. Defaults to ~/.teleport/trusted_certs.json.")
+    var trustedCerts: String?
+
+    @Flag(name: .long, help: "Trust and save an FTPS certificate the system doesn't trust (e.g. self-signed) instead of failing closed.")
+    var acceptUntrustedCert = false
+
     /// Precedence: --password-stdin > --password > TELEPORT_PASSWORD >
     /// password embedded in the URL (user:password@host) > empty (anonymous
     /// FTP, or SFTP key auth, which ignores the password when a key is set).
@@ -44,6 +50,12 @@ struct AuthOptions: ParsableArguments {
         return SSHHostKeyStore(storeURL: url)
     }
 
+    func makeCertificateStore() -> SSHHostKeyStore {
+        let url = trustedCerts.map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".teleport/trusted_certs.json")
+        return SSHHostKeyStore(storeURL: url)
+    }
+
     func makeClient(for target: RemoteTarget) throws -> RemoteClient {
         var connection = target.makeConnection()
         if let identity { connection.sshKeyPath = identity }
@@ -58,7 +70,12 @@ struct AuthOptions: ParsableArguments {
                 onUnknownHostKey: { [acceptNewHostkey] _, _, _ in acceptNewHostkey }
             )
         case .ftp, .ftps:
-            return FTPClient(connection: connection, password: password)
+            return FTPClient(
+                connection: connection,
+                password: password,
+                certificateStore: makeCertificateStore(),
+                onUntrustedCertificate: { [acceptUntrustedCert] _ in acceptUntrustedCert }
+            )
         }
     }
 }

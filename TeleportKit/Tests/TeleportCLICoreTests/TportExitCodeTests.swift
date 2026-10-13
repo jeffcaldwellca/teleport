@@ -31,6 +31,17 @@ final class TportExitCodeTests: XCTestCase {
         )
     }
 
+    func test_map_untrustedFTPSCertificate_sharesTheHostKeyExitCode() {
+        XCTAssertEqual(
+            TportExitCode.map(FTPError.untrustedCertificate(host: "h", port: 21, fingerprint: "a", reason: "r")),
+            .hostKey
+        )
+        XCTAssertEqual(
+            TportExitCode.map(FTPError.certificateChanged(host: "h", port: 21, expected: "a", actual: "b")),
+            .hostKey
+        )
+    }
+
     func test_map_ftpAuthFailed() {
         XCTAssertEqual(TportExitCode.map(FTPError.authFailed), .authFailed)
     }

@@ -211,6 +211,7 @@ struct SettingsView: View {
     @Bindable private var prefs = Preferences.shared
     @State private var localRootDisplay: String = SettingsView.currentLocalRoot()
     @State private var trustedHosts: [SSHHostKeyStore.TrustedHost] = []
+    @State private var trustedCertificates: [SSHHostKeyStore.TrustedHost] = []
     @State private var cliInstalled = CommandLineToolInstaller.isInstalled()
     @State private var cliMessage: String? = nil
     @State private var cliMessageIsError = false
@@ -224,7 +225,7 @@ struct SettingsView: View {
             security
                 .tabItem { Label("Security", systemImage: "lock.shield") }
         }
-        .frame(width: 480, height: 360)
+        .frame(width: 480, height: 420)
     }
 
     private var general: some View {
@@ -321,58 +322,82 @@ struct SettingsView: View {
 
     private var security: some View {
         Form {
-            Section("Trusted SSH host keys") {
-                if trustedHosts.isEmpty {
-                    Text("No host keys trusted yet. The first time you connect to an SSH server, you'll be asked to verify its fingerprint.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(trustedHosts) { host in
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(host.port == 22 ? host.host : "\(host.host):\(host.port)")
-                                    .font(.callout)
-                                Text(SSHKeyFingerprint.display(host.fingerprint))
-                                    .font(.caption2.monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Spacer()
-                            Button("Forget") { forgetHost(host) }
-                                .controlSize(.small)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    Button("Forget All…") { forgetAllHosts() }
-                        .controlSize(.small)
-                        .foregroundStyle(.red)
-                }
-                Text("Forgetting a key makes the next connection re-prompt to confirm the server's fingerprint — useful after a legitimate server-key change, or to revoke trust.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            trustSection(
+                title: "Trusted SSH host keys",
+                hosts: trustedHosts,
+                store: .shared,
+                defaultPort: 22,
+                emptyText: "No host keys trusted yet. The first time you connect to an SSH server, you'll be asked to verify its fingerprint.",
+                footer: "Forgetting a key makes the next connection re-prompt to confirm the server's fingerprint — useful after a legitimate server-key change, or to revoke trust."
+            )
+            trustSection(
+                title: "Trusted FTPS certificates",
+                hosts: trustedCertificates,
+                store: .tlsCertificates,
+                defaultPort: 21,
+                emptyText: "No certificates trusted yet. You're only asked about certificates macOS doesn't already trust, such as self-signed ones.",
+                footer: "Forgetting a certificate makes the next connection re-prompt — useful after the server's certificate is renewed, or to revoke trust."
+            )
         }
         .formStyle(.grouped)
-        .task { await reloadTrustedHosts() }
+        .task { await reloadTrusted() }
     }
 
-    private func reloadTrustedHosts() async {
+    @ViewBuilder
+    private func trustSection(
+        title: String,
+        hosts: [SSHHostKeyStore.TrustedHost],
+        store: SSHHostKeyStore,
+        defaultPort: Int,
+        emptyText: String,
+        footer: String
+    ) -> some View {
+        Section(title) {
+            if hosts.isEmpty {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(hosts) { host in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(host.port == defaultPort ? host.host : "\(host.host):\(host.port)")
+                                .font(.callout)
+                            Text(SSHKeyFingerprint.display(host.fingerprint))
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        Button("Forget") {
+                            Task {
+                                try? await store.forget(id: host.id)
+                                await reloadTrusted()
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 2)
+                }
+                Button("Forget All…") {
+                    Task {
+                        try? await store.forgetAll()
+                        await reloadTrusted()
+                    }
+                }
+                .controlSize(.small)
+                .foregroundStyle(.red)
+            }
+            Text(footer)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func reloadTrusted() async {
         trustedHosts = await SSHHostKeyStore.shared.trustedHosts()
-    }
-
-    private func forgetHost(_ host: SSHHostKeyStore.TrustedHost) {
-        Task {
-            try? await SSHHostKeyStore.shared.forget(id: host.id)
-            await reloadTrustedHosts()
-        }
-    }
-
-    private func forgetAllHosts() {
-        Task {
-            try? await SSHHostKeyStore.shared.forgetAll()
-            await reloadTrustedHosts()
-        }
+        trustedCertificates = await SSHHostKeyStore.tlsCertificates.trustedHosts()
     }
 
     // MARK: - Actions

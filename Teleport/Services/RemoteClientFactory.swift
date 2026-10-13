@@ -1,8 +1,8 @@
 import Foundation
 import TeleportKit
 
-/// Wires GUI-specific policy (sandbox-scoped key bookmarks, the host-key
-/// confirmation sheet) into `SFTPClient`'s injectable dependencies. The CLI
+/// Wires GUI-specific policy (sandbox-scoped key bookmarks, the host-key and
+/// certificate confirmation sheet) into the clients' injectable dependencies. The CLI
 /// has its own equivalent factory with stateless, non-interactive defaults.
 enum RemoteClientFactory {
     static func make(for connection: Connection, password: String) -> RemoteClient {
@@ -34,7 +34,18 @@ enum RemoteClientFactory {
                 }
             )
         case .ftp, .ftps:
-            return FTPClient(connection: connection, password: password)
+            return FTPClient(
+                connection: connection,
+                password: password,
+                certificateStore: .tlsCertificates,
+                onUntrustedCertificate: { certificate in
+                    await HostKeyConfirmation.shared.confirm(
+                        host: certificate.host, port: certificate.port,
+                        fingerprint: certificate.fingerprint,
+                        certificateReason: certificate.reason
+                    )
+                }
+            )
         }
     }
 }

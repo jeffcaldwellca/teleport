@@ -7,6 +7,7 @@
 import Foundation
 import Darwin
 import Security
+import CryptoKit
 
 // MARK: - Errors
 
@@ -20,6 +21,12 @@ public enum FTPError: LocalizedError {
     case transferInterrupted(String)
     case listingFailed(String)
     case serverError(Int, String)
+    /// The FTPS certificate isn't trusted by the system and hasn't been
+    /// accepted by the user for this host.
+    case untrustedCertificate(host: String, port: Int, fingerprint: String, reason: String)
+    /// The FTPS certificate isn't trusted by the system and differs from the
+    /// one the user previously accepted for this host.
+    case certificateChanged(host: String, port: Int, expected: String, actual: String)
 
     public var errorDescription: String? {
         switch self {
@@ -32,8 +39,27 @@ public enum FTPError: LocalizedError {
         case .transferInterrupted(let m):       return "Transfer interrupted: \(m)"
         case .listingFailed(let m):             return "Directory listing failed: \(m)"
         case .serverError(let c, let m):        return "Server error \(c): \(m)"
+        case .untrustedCertificate(let host, let port, let fp, let reason):
+            return "The certificate for \(host):\(port) is not trusted (\(reason)). " +
+                   "Fingerprint \(SSHKeyFingerprint.display(fp)). " +
+                   "Reconnect and choose to trust it if this is expected."
+        case .certificateChanged(let host, let port, let expected, let actual):
+            return "The certificate for \(host):\(port) has changed — possible MITM attack. " +
+                   "Expected \(SSHKeyFingerprint.display(expected)), saw \(SSHKeyFingerprint.display(actual)). " +
+                   "If this change is legitimate (e.g. the certificate was renewed), remove the trusted certificate and reconnect."
         }
     }
+}
+
+/// An FTPS certificate the system doesn't trust, put to the user for a
+/// trust-on-first-use decision.
+public struct UntrustedCertificate: Sendable {
+    public let host: String
+    public let port: Int
+    /// "SHA256:<hex>" of the server's leaf certificate.
+    public let fingerprint: String
+    /// Why the system rejected it (self-signed, hostname mismatch, expired, …).
+    public let reason: String
 }
 
 // MARK: - FTP Response
@@ -145,20 +171,38 @@ private final class FTPSocket {
     // TLS implementation. For now we ensure proper certificate validation
     // and a modern minimum TLS version, which closes the actual security gap.
 
-    func startTLS(serverName: String) throws {
+    /// - Parameters:
+    ///   - port: the control port, to name the server in trust errors.
+    ///   - sessionID: shared by a session's control and data connections so
+    ///     the data channel resumes the control channel's TLS session, which
+    ///     many servers require (vsftpd `require_ssl_reuse`, ProFTPD, …).
+    ///   - pinnedFingerprint: a certificate the user already accepted for
+    ///     this server, honoured when system trust evaluation fails.
+    func startTLS(serverName: String, port: Int, sessionID: String, pinnedFingerprint: String?) throws {
         guard let ctx = SSLCreateContext(nil, .clientSide, .streamType) else {
             throw FTPError.tlsSetupFailed("SSLCreateContext failed")
         }
 
         // C-function-pointer callbacks: non-capturing; fd is passed via the `connection` pointer.
+        // SecureTransport asks for an exact byte count. Anything short of it
+        // must be reported as "would block" (with the partial count), never as
+        // success — a short read passed off as complete makes it parse a
+        // truncated TLS record and fail the stream at random.
         let readFn: SSLReadFunc = { connection, data, dataLength -> OSStatus in
             let fd = Int32(Int(bitPattern: connection))
-            let n  = Darwin.recv(fd, data, dataLength.pointee, 0)
-            if n > 0  { dataLength.pointee = n; return noErr }
-            if n == 0 { dataLength.pointee = 0; return OSStatus(errSSLClosedGraceful) }
-            dataLength.pointee = 0
-            return (errno == EAGAIN || errno == EWOULDBLOCK)
-                ? OSStatus(errSSLWouldBlock) : OSStatus(errSecIO)
+            let wanted = dataLength.pointee
+            var got = 0
+            while got < wanted {
+                let n = Darwin.recv(fd, data.advanced(by: got), wanted - got, 0)
+                if n > 0 { got += n; continue }
+                if n < 0 && errno == EINTR { continue }
+                dataLength.pointee = got
+                if n == 0 { return OSStatus(errSSLClosedGraceful) }
+                return (errno == EAGAIN || errno == EWOULDBLOCK)
+                    ? OSStatus(errSSLWouldBlock) : OSStatus(errSecIO)
+            }
+            dataLength.pointee = got
+            return noErr
         }
 
         let writeFn: SSLWriteFunc = { connection, data, dataLength -> OSStatus in
@@ -180,6 +224,7 @@ private final class FTPSocket {
         SSLSetIOFuncs(ctx, readFn, writeFn)
         SSLSetConnection(ctx, UnsafeRawPointer(bitPattern: Int(fd)))
         SSLSetPeerDomainName(ctx, serverName, serverName.utf8.count)
+        SSLSetPeerID(ctx, sessionID, sessionID.utf8.count)
 
         // Refuse anything older than TLS 1.2.
         SSLSetProtocolVersionMin(ctx, .tlsProtocol12)
@@ -200,7 +245,8 @@ private final class FTPSocket {
                 ssl = ctx
                 return
             case OSStatus(errSSLPeerAuthCompleted):
-                try Self.evaluateServerTrust(ctx, serverName: serverName)
+                try Self.evaluateServerTrust(ctx, serverName: serverName, port: port,
+                                             pinnedFingerprint: pinnedFingerprint)
                 // Continue the handshake after successful trust evaluation.
             case OSStatus(errSSLWouldBlock):
                 // A recv timed out (SO_RCVTIMEO) — keep waiting until the deadline.
@@ -214,7 +260,9 @@ private final class FTPSocket {
         }
     }
 
-    private static func evaluateServerTrust(_ ctx: SSLContext, serverName: String) throws {
+    private static func evaluateServerTrust(
+        _ ctx: SSLContext, serverName: String, port: Int, pinnedFingerprint: String?
+    ) throws {
         var trust: SecTrust?
         let copyStatus = SSLCopyPeerTrust(ctx, &trust)
         guard copyStatus == errSecSuccess, let serverTrust = trust else {
@@ -226,9 +274,26 @@ private final class FTPSocket {
         SecTrustSetPolicies(serverTrust, policy)
 
         var cfError: CFError?
-        guard SecTrustEvaluateWithError(serverTrust, &cfError) else {
-            let detail = cfError.map { CFErrorCopyDescription($0) as String } ?? "untrusted"
-            throw FTPError.tlsSetupFailed("Server certificate rejected: \(detail)")
+        if SecTrustEvaluateWithError(serverTrust, &cfError) { return }
+        let reason = cfError.map { CFErrorCopyDescription($0) as String } ?? "untrusted"
+
+        // Not trusted by the system (self-signed, private CA, name mismatch,
+        // …): fall back to the exact certificate the user accepted, if any.
+        guard let leaf = (SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate])?.first else {
+            throw FTPError.tlsSetupFailed("Server certificate rejected: \(reason)")
+        }
+        let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data)
+        let fingerprint = "SHA256:" + digest.map { String(format: "%02x", $0) }.joined()
+
+        guard let pinned = pinnedFingerprint else {
+            throw FTPError.untrustedCertificate(
+                host: serverName, port: port, fingerprint: fingerprint, reason: reason
+            )
+        }
+        guard pinned == fingerprint else {
+            throw FTPError.certificateChanged(
+                host: serverName, port: port, expected: pinned, actual: fingerprint
+            )
         }
     }
 
@@ -345,8 +410,15 @@ public actor FTPClient: RemoteClient {
 
     private let connection: Connection
     private let password: String
+    private let certificateStore: SSHHostKeyStore
+    private let onUntrustedCertificate: @Sendable (UntrustedCertificate) async -> Bool
     private var socket: FTPSocket?
     private var tlsActive = false
+    /// Certificate the user accepted for this server (FTPS only), if any.
+    private var pinnedCertificate: String?
+    /// Ties this session's data connections to its control connection's TLS
+    /// session; renewed on every (re)connect.
+    private var tlsSessionID = UUID().uuidString
 
     // FTP I/O here is blocking. Run this actor on a dedicated serial queue (a
     // real thread) instead of the Swift concurrency cooperative pool, so a slow
@@ -357,9 +429,29 @@ public actor FTPClient: RemoteClient {
         ioQueue.asUnownedSerialExecutor()
     }
 
-    public init(connection: Connection, password: String) {
+    /// - Parameters:
+    ///   - certificateStore: where FTPS certificates the user chose to trust
+    ///     are looked up and recorded (keyed by `host:port`, like SSH host keys).
+    ///   - onUntrustedCertificate: asked whether to trust an FTPS certificate
+    ///     the system rejects. Called before any credentials are sent.
+    ///     Defaults to `false` (fail closed).
+    public init(
+        connection: Connection,
+        password: String,
+        certificateStore: SSHHostKeyStore = .tlsCertificates,
+        onUntrustedCertificate: @escaping @Sendable (UntrustedCertificate) async -> Bool = { _ in false }
+    ) {
         self.connection = connection
         self.password   = password
+        self.certificateStore = certificateStore
+        self.onUntrustedCertificate = onUntrustedCertificate
+    }
+
+    /// A separate session for one transfer, sharing this client's trust policy.
+    private func makeTransferClient() -> FTPClient {
+        FTPClient(connection: connection, password: password,
+                  certificateStore: certificateStore,
+                  onUntrustedCertificate: onUntrustedCertificate)
     }
 
     // No `deinit { socket?.close() }` — actor-isolated state cannot be
@@ -368,10 +460,50 @@ public actor FTPClient: RemoteClient {
     // MARK: - Connect
 
     public func connect() async throws {
-        try connectSync()
+        if connection.connectionProtocol == .ftps {
+            pinnedCertificate = await certificateStore.fingerprint(
+                for: connection.host, port: connection.port
+            )
+        }
+        do {
+            try connectSync()
+        } catch FTPError.untrustedCertificate(let host, let port, let fingerprint, let reason) {
+            // The handshake was abandoned before login, so nothing has been
+            // sent yet. Ask, remember the answer, and start over pinned to
+            // the certificate that was just approved.
+            let certificate = UntrustedCertificate(
+                host: host, port: port, fingerprint: fingerprint, reason: reason
+            )
+            guard await onUntrustedCertificate(certificate) else {
+                throw FTPError.untrustedCertificate(
+                    host: host, port: port, fingerprint: fingerprint, reason: reason
+                )
+            }
+            // A failed disk write only costs a repeat prompt next time.
+            try? await certificateStore.record(host: host, port: port, fingerprint: fingerprint)
+            pinnedCertificate = fingerprint
+            try connectSync()
+        }
     }
 
     private func connectSync() throws {
+        do {
+            try establishSession()
+        } catch {
+            // Never leave a half-set-up socket behind for later commands.
+            socket?.close()
+            socket = nil
+            tlsActive = false
+            throw error
+        }
+    }
+
+    private func startTLS(on sock: FTPSocket) throws {
+        try sock.startTLS(serverName: connection.host, port: connection.port,
+                          sessionID: tlsSessionID, pinnedFingerprint: pinnedCertificate)
+    }
+
+    private func establishSession() throws {
         // Reconnect-safe: drop any previous socket and, critically, reset
         // `tlsActive`. If it stayed true from a dead FTPS session, the AUTH TLS
         // upgrade below would be skipped and credentials would go out in
@@ -379,13 +511,14 @@ public actor FTPClient: RemoteClient {
         socket?.close()
         socket = nil
         tlsActive = false
+        tlsSessionID = UUID().uuidString
 
         let sock = FTPSocket()
 
         if connection.connectionProtocol == .ftps && connection.port == 990 {
             // Implicit FTPS: TLS from the start
             try sock.connect(host: connection.host, port: connection.port)
-            try sock.startTLS(serverName: connection.host)
+            try startTLS(on: sock)
             tlsActive = true
         } else {
             try sock.connect(host: connection.host, port: connection.port)
@@ -409,10 +542,15 @@ public actor FTPClient: RemoteClient {
                     "Server refused AUTH TLS (\(auth.code) \(auth.message)). Refusing to send credentials over plaintext."
                 )
             }
-            try sock.startTLS(serverName: connection.host)
+            try startTLS(on: sock)
             tlsActive = true
+        }
 
-            // RFC 4217: PBSZ then PROT — without PROT P the data channel is plaintext.
+        // RFC 4217: PBSZ then PROT — without PROT P the data channel is
+        // plaintext. Implicit FTPS needs this too: the control channel being
+        // encrypted from the start says nothing about the data channel, and
+        // we always wrap data connections in TLS once `tlsActive` is set.
+        if tlsActive {
             let pbsz = try sendCommand("PBSZ 0")
             guard pbsz.code == 200 else {
                 throw FTPError.tlsSetupFailed(
@@ -499,7 +637,7 @@ public actor FTPClient: RemoteClient {
         resume: Bool,
         progress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
-        let xfer = FTPClient(connection: connection, password: password)
+        let xfer = makeTransferClient()
         try await xfer.connect()
         do {
             try await xfer.performDownload(
@@ -550,6 +688,7 @@ public actor FTPClient: RemoteClient {
         guard resp.code == 125 || resp.code == 150 else {
             throw FTPError.unexpectedResponse(resp.code, resp.message)
         }
+        try secureDataConnection(dataSock)
 
         var received = startOffset
         progress(received, totalBytes)
@@ -585,7 +724,7 @@ public actor FTPClient: RemoteClient {
         resume: Bool,
         progress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
-        let xfer = FTPClient(connection: connection, password: password)
+        let xfer = makeTransferClient()
         try await xfer.connect()
         do {
             try await xfer.performUpload(
@@ -635,6 +774,7 @@ public actor FTPClient: RemoteClient {
         guard resp.code == 125 || resp.code == 150 else {
             throw FTPError.unexpectedResponse(resp.code, resp.message)
         }
+        try secureDataConnection(dataSock)
 
         var sent = startOffset
         progress(sent, total)
@@ -805,6 +945,7 @@ public actor FTPClient: RemoteClient {
         guard resp.code == 125 || resp.code == 150 else {
             throw FTPError.serverError(resp.code, resp.message)
         }
+        try secureDataConnection(dataSock)
 
         var result = Data()
         while let chunk = try dataSock.readChunk() { result.append(chunk) }
@@ -817,6 +958,16 @@ public actor FTPClient: RemoteClient {
         return result
     }
 
+    /// Wrap an open data connection in TLS (FTPS only). Must run *after* the
+    /// transfer command's preliminary 125/150 reply: servers don't answer the
+    /// data-channel handshake until they've been told what the connection is
+    /// for, so handshaking any earlier deadlocks.
+    private func secureDataConnection(_ dataSock: FTPSocket) throws {
+        if tlsActive { try startTLS(on: dataSock) }
+    }
+
+    /// Opens the (still plaintext) passive data connection; see
+    /// `secureDataConnection` for the TLS step.
     private func openDataConnection() throws -> FTPSocket {
         // Try EPSV first (better NAT traversal, IPv6 compatible)
         if let sock = try? openEPSV() { return sock }
@@ -835,7 +986,6 @@ public actor FTPClient: RemoteClient {
 
         let sock = FTPSocket()
         try sock.connect(host: connection.host, port: port)
-        if tlsActive { try sock.startTLS(serverName: connection.host) }
         return sock
     }
 
@@ -853,7 +1003,6 @@ public actor FTPClient: RemoteClient {
         // Use the control-channel host (ignores server's PASV IP — common NAT workaround)
         let sock = FTPSocket()
         try sock.connect(host: connection.host, port: port)
-        if tlsActive { try sock.startTLS(serverName: connection.host) }
         return sock
     }
 
