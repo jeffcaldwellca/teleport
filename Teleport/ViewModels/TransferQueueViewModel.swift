@@ -30,6 +30,7 @@ final class TransferQueueViewModel {
     var batchResolution: ConflictResolution? = nil
 
     private let passwordProvider: (Connection) -> String
+    private let clientFactory: (Connection, String) -> RemoteClient
     private var conflictContinuation: CheckedContinuation<ConflictResolution, Never>?
 
     /// Number of running transfer workers. Bounded by `maxConcurrentTransfers`.
@@ -45,8 +46,14 @@ final class TransferQueueViewModel {
     private var conflictGateBusy = false
     private var conflictGateWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(passwordProvider: @escaping (Connection) -> String) {
+    /// - Parameter clientFactory: builds the client for each transfer; tests
+    ///   substitute a scripted one.
+    init(
+        passwordProvider: @escaping (Connection) -> String,
+        clientFactory: @escaping (Connection, String) -> RemoteClient = RemoteClientFactory.make(for:password:)
+    ) {
         self.passwordProvider = passwordProvider
+        self.clientFactory = clientFactory
     }
 
     // MARK: - Visibility
@@ -152,7 +159,7 @@ final class TransferQueueViewModel {
             // --- Connect ---
             task.status = attempt == 0 ? .connecting : .retrying(attempt)
             let password = passwordProvider(task.connection)
-            let client = RemoteClientFactory.make(for: task.connection, password: password)
+            let client = clientFactory(task.connection, password)
 
             do {
                 try await client.connect()
@@ -177,14 +184,15 @@ final class TransferQueueViewModel {
             }
 
             // --- Conflict check ---
-            // Only on the first attempt: a retry's partial file must not
-            // re-trigger the dialog (or worse, auto-rename mid-resume). The
-            // attempt-0 resolution already mutated `effective*` paths, which
-            // retries reuse.
+            // Once per task, on whichever attempt first gets a connection: a
+            // retry's partial file must not re-trigger the dialog (or worse,
+            // auto-rename mid-resume), and an attempt that died connecting
+            // must not let the next one skip the question. The resolution
+            // mutates `effective*` paths, which later attempts reuse.
             let hasConflict: Bool
             let localDate: Date?
             let remoteDate: Date?
-            if attempt == 0 && !task.resumeOnNextAttempt {
+            if !task.conflictSettled && !task.resumeOnNextAttempt {
                 localDate  = localModifiedDate(for: task)
                 remoteDate = await client.remoteModifiedDate(at: task.effectiveRemotePath)
                 switch task.direction {
@@ -201,11 +209,13 @@ final class TransferQueueViewModel {
                 localDate   = nil
                 remoteDate  = nil
             }
+            if !hasConflict { task.conflictSettled = true }
 
             if hasConflict {
                 // A predetermined overwrite (remote-edit auto-uploads) needs no
                 // dialog — keep the live connection and transfer right away.
                 if task.conflictBehavior == .overwrite {
+                    task.conflictSettled = true
                     let shouldRetry = await performTransfer(
                         task: task, client: client,
                         attempt: attempt, maxRetries: maxRetries
@@ -237,15 +247,18 @@ final class TransferQueueViewModel {
                 case .autoRename:
                     if task.direction == .download {
                         task.effectiveLocalURL = uniqueLocalURL(for: task.effectiveLocalURL)
+                    } else {
+                        // Picked in performTransfer, which has a live client.
+                        task.needsUniqueRemotePath = true
                     }
-                    // Remote auto-rename happens after we reconnect (needs a live client).
                 case .overwrite, .overwriteIfNewer:
                     break
                 }
+                task.conflictSettled = true
 
                 // Reconnect with the (possibly new) effective path
                 task.status = attempt == 0 ? .connecting : .retrying(attempt)
-                let freshClient = RemoteClientFactory.make(for: task.connection, password: password)
+                let freshClient = clientFactory(task.connection, password)
                 do {
                     try await freshClient.connect()
                 } catch {
@@ -259,13 +272,6 @@ final class TransferQueueViewModel {
                     continue
                 }
 
-                // For uploads with auto-rename, find the first non-existing path now that
-                // we have a live connection.
-                if effectiveResolution == .autoRename, task.direction == .upload {
-                    task.effectiveRemotePath = await uniqueRemotePath(
-                        for: task.effectiveRemotePath, using: freshClient
-                    )
-                }
                 let shouldRetry = await performTransfer(
                     task: task, client: freshClient,
                     attempt: attempt, maxRetries: maxRetries
@@ -296,12 +302,24 @@ final class TransferQueueViewModel {
         task.status = .active
         task.start()
 
+        // An auto-renamed upload picks its free remote name now that there is
+        // a live connection to ask.
+        if task.needsUniqueRemotePath {
+            task.effectiveRemotePath = await uniqueRemotePath(for: task.effectiveRemotePath, using: client)
+            task.needsUniqueRemotePath = false
+        }
+
+        // Resume only from bytes this task wrote itself (an earlier attempt,
+        // or before the user paused). An attempt that never got as far as
+        // transferring has left nothing to resume — whatever sits at the
+        // destination is someone else's file.
+        let resume = task.transferStarted || task.resumeOnNextAttempt
+        task.transferStarted = true
+
         do {
-            // Retries resume from partial bytes, as does a task the user
-            // un-paused. A stall watchdog cancels the transfer if no progress
-            // is made for a while (covers SFTP, which lacks FTP's socket-level
-            // read timeout) — surfacing as a retry.
-            let resume = attempt > 0 || task.resumeOnNextAttempt
+            // A stall watchdog cancels the transfer if no progress is made for
+            // a while (covers SFTP, which lacks FTP's socket-level read
+            // timeout) — surfacing as a retry.
             try await runWithStallWatchdog(task: task) {
                 switch task.direction {
                 case .download:
@@ -606,6 +624,7 @@ final class TransferQueueViewModel {
         task.bytesTransferred    = 0
         task.progress            = 0
         task.pauseRequested      = false
+        task.transferStarted     = false
         // A failed download kept its staged bytes — continue from them. The
         // conflict was already settled on the first run.
         task.resumeOnNextAttempt = task.direction == .download
