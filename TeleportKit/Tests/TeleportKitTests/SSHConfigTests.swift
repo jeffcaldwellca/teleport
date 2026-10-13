@@ -127,6 +127,20 @@ final class SSHConfigTests: XCTestCase {
         XCTAssertEqual(host.hosts.map(\.alias), ["quoted alias", "web", "other"])
     }
 
+    /// `HostName %h.example.com` is how configs turn a short alias into a
+    /// full name; taken literally it would be a host called "%h.example.com".
+    func test_hostName_expandsTheHostToken() {
+        let text = """
+        Host web db
+            HostName %h.internal.example.com
+        Host odd
+            HostName 100%%-real.example.com
+        """
+        XCTAssertEqual(config(text).resolve("web").hostName, "web.internal.example.com")
+        XCTAssertEqual(config(text).resolve("db").hostName, "db.internal.example.com")
+        XCTAssertEqual(config(text).resolve("odd").hostName, "100%-real.example.com")
+    }
+
     func test_emptyOrMissingConfig_resolvesToTheNameItself() {
         XCTAssertEqual(config("").resolve("example.com"),
                        SSHConfig.Host(alias: "example.com", hostName: "example.com"))

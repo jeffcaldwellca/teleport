@@ -73,9 +73,10 @@ final class ConnectionStore {
         persist()
     }
 
+    @MainActor
     func delete(_ connection: Connection) {
         KeychainService.delete(for: connection.id)
-        KeychainService.delete(account: KeychainService.passphraseAccount(for: connection.id))
+        PassphrasePrompt.shared.forget(connection.id)
         connections.removeAll { $0.id == connection.id }
         persist()
     }

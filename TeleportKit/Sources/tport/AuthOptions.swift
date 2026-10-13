@@ -100,6 +100,13 @@ struct AuthOptions: ParsableArguments {
                FileManager.default.fileExists(atPath: keyFile) {
                 connection.sshKeyPath = keyFile
             }
+            // The URL no longer says where this goes; if it fails, the error
+            // needs to (most often: an unknown host key for the real address).
+            if connection.host != target.host || connection.port != target.port || connection.username != target.username {
+                FailureNotes.shared.sshConfigResolution =
+                    "\u{2018}\(target.host)\u{2019} was resolved through the ssh config to " +
+                    "\(connection.username)@\(connection.host):\(connection.port). Pass --no-ssh-config to use the URL as written."
+            }
         }
 
         switch target.connectionProtocol {

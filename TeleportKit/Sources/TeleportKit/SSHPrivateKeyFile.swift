@@ -52,6 +52,20 @@ public enum SSHPrivateKeyFile {
         String(openSSHPublicKey: try privateKey(from: keyText, passphrase: passphrase).publicKey)
     }
 
+    /// False only when `passphrase` is definitely the wrong one for this key.
+    /// Any other problem with the file (unsupported, damaged) is not this
+    /// question's to answer, and reads as true.
+    public static func canUnlock(_ keyText: String, passphrase: String) -> Bool {
+        do {
+            _ = try privateKey(from: keyText, passphrase: passphrase)
+            return true
+        } catch Failure.wrongPassphrase {
+            return false
+        } catch {
+            return true
+        }
+    }
+
     // MARK: - Parsing
 
     static func privateKey(from keyText: String, passphrase: String?) throws -> NIOSSHPrivateKey {
@@ -61,6 +75,16 @@ public enum SSHPrivateKeyFile {
         }
         let encrypted = container.cipher != "none"
         let decryptionKey = passphrase.map { Data($0.utf8) }
+
+        // Citadel decrypts only these. For any other cipher no passphrase can
+        // work, so say that instead of asking for one and calling it wrong.
+        guard Self.decryptableCiphers.contains(container.cipher) else {
+            throw Failure.unsupported(
+                "This key is encrypted with \(container.cipher), which can't be read here. Re-encrypt it with " +
+                "`ssh-keygen -p -Z aes256-ctr -f <key file>`, or add it to ssh-agent and turn on " +
+                "\u{201C}Use ssh-agent\u{201D}."
+            )
+        }
 
         switch container.keyType {
         case "ssh-ed25519":
@@ -98,6 +122,8 @@ public enum SSHPrivateKeyFile {
             )
         }
     }
+
+    private static let decryptableCiphers: Set<String> = ["none", "aes128-ctr", "aes256-ctr"]
 
     /// Editors and copy-paste leave CRLF line endings and stray blank lines.
     private static func normalise(_ text: String) -> String {

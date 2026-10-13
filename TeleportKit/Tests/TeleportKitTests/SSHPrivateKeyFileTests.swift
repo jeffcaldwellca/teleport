@@ -17,12 +17,12 @@ final class SSHPrivateKeyFileTests: XCTestCase {
     }
 
     /// Returns (private key text, "type base64" from the .pub file).
-    private func generate(_ type: String, bits: Int? = nil, passphrase: String = "") throws -> (key: String, pub: String) {
+    private func generate(_ type: String, bits: Int? = nil, passphrase: String = "", cipher: String? = nil) throws -> (key: String, pub: String) {
         let path = dir.appending(component: "key-\(UUID().uuidString)").path
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
         process.arguments = ["-q", "-t", type] + (bits.map { ["-b", String($0)] } ?? [])
-            + ["-N", passphrase, "-C", "test", "-f", path]
+            + (cipher.map { ["-Z", $0] } ?? []) + ["-N", passphrase, "-C", "test", "-f", path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -100,6 +100,32 @@ final class SSHPrivateKeyFileTests: XCTestCase {
             }
             XCTAssertTrue(message.contains("ssh-add"), message)
         }
+    }
+
+    // MARK: - Ciphers
+
+    /// Only aes128-ctr and aes256-ctr can be decrypted. For anything else no
+    /// passphrase will ever work, so asking for one (and then calling it
+    /// wrong) would send the user round in circles.
+    func test_encryptedWithACipherThatCannotBeDecrypted_saysSo_withoutBlamingThePassphrase() throws {
+        let (key, _) = try generate("ed25519", passphrase: "correct horse", cipher: "aes256-cbc")
+        XCTAssertTrue(SSHPrivateKeyFile.isEncrypted(key))
+        for passphrase in [nil, "correct horse"] {
+            XCTAssertThrowsError(try publicKey(key, passphrase: passphrase)) { error in
+                guard case .unsupported(let message)? = error as? SSHPrivateKeyFile.Failure else {
+                    return XCTFail("Expected .unsupported, got \(error)")
+                }
+                XCTAssertTrue(message.contains("aes256-cbc"), message)
+            }
+        }
+    }
+
+    func test_canUnlock_isFalseOnlyForAWrongPassphrase() throws {
+        let (encrypted, _) = try generate("ed25519", passphrase: "correct horse")
+        XCTAssertTrue(SSHPrivateKeyFile.canUnlock(encrypted, passphrase: "correct horse"))
+        XCTAssertFalse(SSHPrivateKeyFile.canUnlock(encrypted, passphrase: "battery staple"))
+        // Not a passphrase problem, so not for the passphrase sheet to reject.
+        XCTAssertTrue(SSHPrivateKeyFile.canUnlock("not a key", passphrase: "anything"))
     }
 
     // MARK: - Untidy input
