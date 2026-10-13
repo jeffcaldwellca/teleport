@@ -187,4 +187,118 @@ final class FolderSyncPlanTests: XCTestCase {
         XCTAssertEqual(plan.totalBytes, 100)
         XCTAssertTrue(plan.hasChanges)
     }
+
+    // MARK: - Review: paths that must never be deleted
+
+    /// rsync habits: `uploads/`, `/uploads`, `./uploads`. A pattern that
+    /// silently matched nothing would leave the folder it was meant to
+    /// protect open to deletion.
+    func test_excludePatterns_writtenTheRsyncWay_stillExclude() throws {
+        for pattern in ["uploads/", "/uploads", "./uploads", "uploads"] {
+            XCTAssertTrue(FolderSync.matches(exclude: pattern, relativePath: "uploads/photo.jpg"), pattern)
+            let plan = try plan(
+                local: [file("index.html")],
+                remote: [file("index.html"), dir("uploads"), file("uploads/photo.jpg")],
+                .upload, SyncOptions(deleteExtraneous: true, excludes: [pattern])
+            )
+            XCTAssertFalse(plan.hasChanges, "\(pattern): \(summary(plan))")
+        }
+        // A leading slash anchors to the sync root, as in rsync.
+        XCTAssertFalse(FolderSync.matches(exclude: "/uploads", relativePath: "site/uploads/photo.jpg"))
+        XCTAssertTrue(FolderSync.matches(exclude: "uploads/", relativePath: "site/uploads/photo.jpg"))
+        XCTAssertFalse(FolderSync.matches(exclude: "", relativePath: "anything"))
+        XCTAssertFalse(FolderSync.matches(exclude: "/", relativePath: "anything"))
+    }
+
+    /// `Images/a.png` here, `images/a.png` there. On a case-insensitive disk
+    /// (the Mac default, and Windows servers) those are one file: "download
+    /// the new one, delete the old one" would overwrite it and then delete it.
+    func test_namesDifferingOnlyInCase_areLeftAlone_onBothSides() throws {
+        let plan = try plan(
+            local: [dir("Images"), file("Images/a.png"), file("README.md"), file("index.html")],
+            remote: [dir("images"), file("images/a.png"), file("images/b.png"), file("Readme.md"), file("index.html")],
+            .download, SyncOptions(deleteExtraneous: true)
+        )
+        XCTAssertEqual(plan.transfers.count, 0, "\(summary(plan))")
+        XCTAssertEqual(plan.deletions.count, 0, "\(summary(plan))")
+        XCTAssertEqual(plan.directories.count, 0, "\(summary(plan))")
+        XCTAssertEqual(Set(plan.skips.map(\.relativePath)), ["images", "Readme.md"])
+        XCTAssertTrue(plan.skips.allSatisfy { $0.reason.contains("case") }, "\(plan.skips.map(\.reason))")
+
+        let upload = try self.plan(
+            local: [file("Readme.md")], remote: [file("README.md")], .upload, SyncOptions(deleteExtraneous: true)
+        )
+        XCTAssertFalse(upload.hasChanges, "\(summary(upload))")
+    }
+
+    func test_caseDistinctFilesThatExistOnBothSides_areSyncedNormally() throws {
+        let plan = try plan(
+            local: [file("a.txt", size: 5), file("A.txt")], remote: [file("a.txt"), file("A.txt")]
+        )
+        XCTAssertEqual(summary(plan), ["transfer a.txt"])
+    }
+
+    /// A symlink is never followed or copied — but the real folder or file
+    /// under the same name on the other side is not "extraneous" either.
+    func test_symlinkOnOneSide_protectsWhatIsUnderThatNameOnTheOther() throws {
+        var link = SyncEntry(relativePath: "current", isDirectory: false)
+        link.isOpaque = true
+        let plan = try plan(
+            local: [link, file("index.html")],
+            remote: [dir("current"), file("current/app.js"), dir("current/lib"), file("index.html")],
+            .upload, SyncOptions(deleteExtraneous: true)
+        )
+        XCTAssertEqual(summary(plan), ["skip current"])
+        XCTAssertTrue(plan.skips[0].reason.contains("link"), plan.skips[0].reason)
+
+        // And the other way round: a link at the destination isn't replaced or removed.
+        let reversed = try self.plan(
+            local: [dir("current"), file("current/app.js")], remote: [link],
+            .upload, SyncOptions(deleteExtraneous: true)
+        )
+        XCTAssertEqual(summary(reversed), ["skip current"])
+
+        // A link with nothing opposite it is simply not synced; its folder is kept.
+        let alone = try self.plan(
+            local: [file("index.html")],
+            remote: [file("index.html"), dir("releases"), SyncEntry(relativePath: "releases/latest", isDirectory: false, isOpaque: true)],
+            .upload, SyncOptions(deleteExtraneous: true)
+        )
+        XCTAssertEqual(summary(alone), ["skip releases"])
+    }
+
+    /// Download staging files (`name.part`) belong to a transfer in flight.
+    func test_partFiles_areNeitherUploadedNorDeleted() throws {
+        let plan = try plan(
+            local: [file("video.mp4.part"), file("index.html")], remote: [file("index.html"), file("other.zip.part")],
+            .upload, SyncOptions(deleteExtraneous: true)
+        )
+        XCTAssertFalse(plan.hasChanges, "\(summary(plan))")
+    }
+
+    // MARK: - Review: times that can't be trusted
+
+    /// FTP `LIST` times are to the minute *and* in the server's time zone. A
+    /// same-size pair within a time-zone's reach of each other can't be
+    /// judged from the listing in either direction, so it is flagged for an
+    /// exact check instead of being called "in sync" or "newer".
+    func test_sameSizeWithACoarseRemoteTimeNearby_isMarkedUncertain() throws {
+        let hour: TimeInterval = 3600
+        let plan = try plan(
+            local: [file("edited.css", at: 0), file("looksNewer.css", at: 5 * hour),
+                    file("clearlyNewer.css", at: 40 * hour), file("clearlyOlder.css", at: -40 * hour)],
+            remote: [file("edited.css", at: 9 * hour, seconds: false), file("looksNewer.css", seconds: false),
+                     file("clearlyNewer.css", seconds: false), file("clearlyOlder.css", seconds: false)]
+        )
+        XCTAssertEqual(Set(plan.uncertain), ["edited.css", "looksNewer.css"])
+        XCTAssertEqual(plan.transfers.map(\.relativePath), ["clearlyNewer.css", "looksNewer.css"])
+
+        // Exact listings (SFTP, MLSD) never need a second look.
+        let exact = try self.plan(local: [file("a.css", at: 3600)], remote: [file("a.css")])
+        XCTAssertTrue(exact.uncertain.isEmpty)
+        // Nor does a size-only comparison.
+        let sizeOnly = try self.plan(local: [file("a.css", at: 3600)], remote: [file("a.css", seconds: false)],
+                                     .upload, SyncOptions(sizeOnly: true))
+        XCTAssertTrue(sizeOnly.uncertain.isEmpty)
+    }
 }

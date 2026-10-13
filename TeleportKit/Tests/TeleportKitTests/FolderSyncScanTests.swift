@@ -41,7 +41,7 @@ final class FolderSyncScanTests: XCTestCase {
 
     /// An excluded folder is reported (so the planner knows it is there and
     /// protects it) but not walked into.
-    func test_scanLocal_reportsExcludedItemsButDoesNotDescend_andSkipsSymlinks() throws {
+    func test_scanLocal_reportsExcludedItemsAndLinks_butDoesNotDescendIntoEither() throws {
         try write("app.js")
         try write("node_modules/big/index.js")
         try write("debug.log")
@@ -49,7 +49,8 @@ final class FolderSyncScanTests: XCTestCase {
 
         let entries = try FolderSync.scanLocal(root, excludes: ["node_modules", "*.log"])
 
-        XCTAssertEqual(paths(entries), ["app.js", "debug.log", "node_modules"])
+        XCTAssertEqual(paths(entries), ["app.js", "debug.log", "link", "node_modules"])
+        XCTAssertEqual(entries.filter(\.isOpaque).map(\.relativePath), ["link"])
     }
 
     func test_scanLocal_missingRoot_isAnError_notAnEmptyFolder() {
@@ -84,10 +85,10 @@ final class FolderSyncScanTests: XCTestCase {
         ])
     }
 
-    func test_scanRemote_walksTheTree_reportingExcludedFoldersWithoutDescending_andSkippingSymlinks() async throws {
+    func test_scanRemote_walksTheTree_reportingExcludedFoldersAndLinksWithoutDescending() async throws {
         let entries = try await FolderSync.scanRemote(remoteTree(), root: "/var/www", excludes: ["node_modules"])
 
-        XCTAssertEqual(paths(entries), ["css", "css/site.css", "index.html", "node_modules"])
+        XCTAssertEqual(paths(entries), ["css", "css/site.css", "current", "index.html", "node_modules"])
         XCTAssertEqual(entries.first { $0.relativePath == "index.html" }?.size, 5)
     }
 
@@ -104,7 +105,7 @@ final class FolderSyncScanTests: XCTestCase {
         XCTAssertEqual(paths(fromRoot), ["a.txt", "d", "d/b.txt"])
 
         let trailing = try await FolderSync.scanRemote(remoteTree(), root: "/var/www/", excludes: ["node_modules"])
-        XCTAssertEqual(paths(trailing), ["css", "css/site.css", "index.html", "node_modules"])
+        XCTAssertEqual(paths(trailing), ["css", "css/site.css", "current", "index.html", "node_modules"])
     }
 
     func test_scanRemote_missingRoot_throws_unlessItIsADestinationToBeCreated() async throws {
@@ -125,20 +126,73 @@ final class FolderSyncScanTests: XCTestCase {
         }
     }
 
-    // MARK: - Refining "newer" against imprecise listings
+    // MARK: - Review: scanning must not under-report
 
-    /// FTP `LIST` gives times to the minute, in the server's own time zone.
-    /// A file that merely *looks* older there is checked against the exact
-    /// time before it is sent again — otherwise recently edited files would
-    /// be re-uploaded on every run.
+    /// A folder that can't be read is not an empty folder. Reporting it as
+    /// one would have a sync-with-delete remove everything under it on the
+    /// other side.
+    func test_scanLocal_unreadableSubfolder_abortsTheScan() throws {
+        try write("public/index.html")
+        try write("private/secret.txt")
+        let locked = root.appending(path: "private")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+
+        XCTAssertThrowsError(try FolderSync.scanLocal(root)) { error in
+            guard case .unreadable(let path)? = error as? FolderSyncError else {
+                return XCTFail("Expected .unreadable, got \(error)")
+            }
+            XCTAssertTrue(path.contains("private"), path)
+        }
+    }
+
+    func test_scanLocal_reportsSymlinksAsOpaque_withoutFollowingThem() throws {
+        try write("releases/3/app.js")
+        try FileManager.default.createSymbolicLink(at: root.appending(path: "current"),
+                                                   withDestinationURL: root.appending(path: "releases/3"))
+
+        let entries = try FolderSync.scanLocal(root)
+
+        let link = try XCTUnwrap(entries.first { $0.relativePath == "current" })
+        XCTAssertTrue(link.isOpaque)
+        XCTAssertFalse(entries.contains { $0.relativePath.hasPrefix("current/") })
+    }
+
+    func test_scanRemote_reportsSymlinksAsOpaque() async throws {
+        let entries = try await FolderSync.scanRemote(remoteTree(), root: "/var/www", excludes: ["node_modules"])
+        XCTAssertEqual(entries.first { $0.relativePath == "current" }?.isOpaque, true)
+    }
+
+    /// "Couldn't list it" is only "it isn't there yet" when the parent
+    /// folder agrees. A permission error or a timeout on an existing folder
+    /// must not be read as an empty destination.
+    func test_scanRemote_rootThatExistsButCannotBeListed_isAnError_evenAsADestination() async throws {
+        let client = TreeClient(tree: ["/var": [TreeClient.dir("/var/www")]])   // /var/www exists, listing it fails
+        do {
+            _ = try await FolderSync.scanRemote(client, root: "/var/www", missingRootIsEmpty: true)
+            XCTFail("An existing folder that can't be listed is not empty")
+        } catch {}
+
+        let absent = try await FolderSync.scanRemote(client, root: "/var/new-site", missingRootIsEmpty: true)
+        XCTAssertEqual(absent, [])
+    }
+
+    // MARK: - Refining against exact times
+
+    private func coarse(_ path: String, _ time: Date) -> SyncEntry {
+        SyncEntry(relativePath: path, isDirectory: false, size: 10, modified: time, modifiedHasSeconds: false)
+    }
+    private func precise(_ path: String, _ time: Date) -> SyncEntry {
+        SyncEntry(relativePath: path, isDirectory: false, size: 10, modified: time)
+    }
+
+    /// The listing shows the server's files five hours "older" (a server five
+    /// time zones away). The exact times settle each one.
     func test_refine_dropsTransfersTheExactServerTimeShowsAreNotNewer() async throws {
         let edited = Date(timeIntervalSince1970: 1_700_003_600)
-        let local = [SyncEntry(relativePath: "a.css", isDirectory: false, size: 10, modified: edited),
-                     SyncEntry(relativePath: "b.css", isDirectory: false, size: 10, modified: edited)]
-        // The listing shows both five hours "older" (a server five time zones away), to the minute.
-        let listed = Date(timeIntervalSince1970: 1_700_003_600 - 5 * 3600)
-        let remote = [SyncEntry(relativePath: "a.css", isDirectory: false, size: 10, modified: listed, modifiedHasSeconds: false),
-                      SyncEntry(relativePath: "b.css", isDirectory: false, size: 10, modified: listed, modifiedHasSeconds: false)]
+        let listed = edited.addingTimeInterval(-5 * 3600)
+        let local = [precise("a.css", edited), precise("b.css", edited)]
+        let remote = [coarse("a.css", listed), coarse("b.css", listed)]
         let plan = try FolderSync.plan(local: local, remote: remote, direction: .upload)
         XCTAssertEqual(plan.transfers.map(\.relativePath), ["a.css", "b.css"])
 
@@ -149,15 +203,31 @@ final class FolderSyncScanTests: XCTestCase {
         let refined = await FolderSync.refine(plan, local: local, remote: remote, remoteRoot: "/site", client: client)
 
         XCTAssertEqual(refined.transfers.map(\.relativePath), ["b.css"])
+        XCTAssertTrue(refined.uncertain.isEmpty)
     }
 
-    func test_refine_leavesPreciseListingsAndOtherReasonsAlone_withoutAskingTheServer() async throws {
+    /// The other way round: the listing makes the server's copy look ten
+    /// hours *newer* (a server ahead of UTC), hiding a same-size local edit.
+    func test_refine_addsTransfersTheListingHid() async throws {
+        let edited = Date(timeIntervalSince1970: 1_700_003_600)
+        let local = [precise("a.css", edited)]
+        let remote = [coarse("a.css", edited.addingTimeInterval(9 * 3600))]
+        let plan = try FolderSync.plan(local: local, remote: remote, direction: .upload)
+        XCTAssertTrue(plan.transfers.isEmpty)
+
+        let client = TreeClient()
+        client.preciseTimes = ["/site/a.css": edited.addingTimeInterval(-3600)]   // really an hour older than the edit
+
+        let refined = await FolderSync.refine(plan, local: local, remote: remote, remoteRoot: "/site", client: client)
+
+        XCTAssertEqual(refined.transfers.map(\.relativePath), ["a.css"])
+        XCTAssertEqual(refined.transfers.first?.reason, "newer")
+    }
+
+    func test_refine_asksNothingWhenTheListingIsExact_orTheServerCannotSay() async throws {
         let now = Date(timeIntervalSince1970: 1_700_000_045)
-        let local = [SyncEntry(relativePath: "newer.css", isDirectory: false, size: 10, modified: now.addingTimeInterval(100)),
-                     SyncEntry(relativePath: "bigger.css", isDirectory: false, size: 20, modified: now),
-                     SyncEntry(relativePath: "new.css", isDirectory: false, size: 5, modified: now)]
-        let remote = [SyncEntry(relativePath: "newer.css", isDirectory: false, size: 10, modified: now),
-                      SyncEntry(relativePath: "bigger.css", isDirectory: false, size: 10, modified: now)]
+        let local = [precise("newer.css", now.addingTimeInterval(100)), precise("new.css", now)]
+        let remote = [precise("newer.css", now)]
         let plan = try FolderSync.plan(local: local, remote: remote, direction: .upload)
         let client = TreeClient()
 
@@ -165,5 +235,12 @@ final class FolderSyncScanTests: XCTestCase {
 
         XCTAssertEqual(refined, plan)
         XCTAssertTrue(client.calls.isEmpty, "\(client.calls)")
+
+        // No exact time available (no MDTM): the listing's verdict stands.
+        let coarsePlan = try FolderSync.plan(local: [precise("a.css", now.addingTimeInterval(3600))],
+                                             remote: [coarse("a.css", now)], direction: .upload)
+        let unchanged = await FolderSync.refine(coarsePlan, local: [precise("a.css", now.addingTimeInterval(3600))],
+                                                remote: [coarse("a.css", now)], remoteRoot: "/site", client: client)
+        XCTAssertEqual(unchanged.transfers.map(\.relativePath), ["a.css"])
     }
 }

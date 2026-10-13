@@ -69,6 +69,7 @@ final class SyncViewModel: Identifiable {
         generation += 1
         let asked = generation
         plan = nil
+        deletionsCalledOff = false
         phase = .comparing
         let (localRoot, remoteRoot, direction, options) = (localRoot, remoteRoot, direction, options)
         do {
@@ -89,31 +90,38 @@ final class SyncViewModel: Identifiable {
 
     // MARK: - Apply
 
-    /// Carry out the reviewed plan: folders first, then the transfers go to
-    /// the queue (as overwrites — the plan already decided), then deletions.
+    /// True while the transfers are running and deletions are waiting on them.
+    private(set) var isWaitingToDelete = false
+    private var deletionsCalledOff = false
+
+    /// Keep the transfers, drop the deletions. Usable while they are still
+    /// waiting for the transfers to finish.
+    func skipDeletions() {
+        deletionsCalledOff = true
+    }
+
+    /// Carry out the reviewed plan: folders first, then the transfers through
+    /// the queue (as overwrites — the plan already decided), and only once
+    /// every one of those has succeeded, the deletions.
+    ///
+    /// That order matters. A renamed file shows up as "transfer the new
+    /// name, delete the old": deleting first would, if the transfer then
+    /// failed or was cancelled, leave the destination with neither.
     func apply() async {
         guard phase == .ready, let plan else { return }
         phase = .applying
         let remoteRoot = remoteRoot
         let remotePath: @Sendable (String) -> String = { FolderSync.joined(remoteRoot, $0) }
-        var failures: [String] = []
 
         do {
             switch plan.direction {
             case .upload:
                 let folders = plan.directories.map { remotePath($0.relativePath) }
-                let doomed = plan.deletions.map { (remotePath($0.relativePath), $0.isDirectory) }
-                failures = try await queue.withOwnConnection(to: connection) { client in
+                try await queue.withOwnConnection(to: connection) { client in
                     // May exist already; a genuinely missing folder shows up
                     // as failed uploads in the queue.
                     try? await client.createDirectory(at: remoteRoot)
                     for folder in folders { try? await client.createDirectory(at: folder) }
-                    var failed: [String] = []
-                    for (path, isDirectory) in doomed {
-                        do { try await client.delete(at: path, isDirectory: isDirectory) }
-                        catch { failed.append(path) }
-                    }
-                    return failed
                 }
             case .download:
                 try FileManager.default.createDirectory(at: localRoot, withIntermediateDirectories: true)
@@ -121,35 +129,68 @@ final class SyncViewModel: Identifiable {
                     try FileManager.default.createDirectory(at: localRoot.appending(path: folder.relativePath),
                                                             withIntermediateDirectories: true)
                 }
-                for deletion in plan.deletions {
-                    let url = localRoot.appending(path: deletion.relativePath)
-                    do { try trash(url) } catch { failures.append(deletion.relativePath) }
-                }
             }
         } catch {
             phase = .failed(error.localizedDescription)
             return
         }
 
-        queue.enqueueBatch(
+        let transfers = queue.enqueueBatch(
             connection: connection,
             direction: plan.direction == .upload ? .upload : .download,
             items: plan.transfers.map { (localRoot.appending(path: $0.relativePath), remotePath($0.relativePath)) },
             conflictBehavior: .overwrite
         )
-
         self.plan = nil
-        phase = .done(Self.outcome(of: plan, failedDeletions: failures.count))
+
+        var deletionOutcome: String?
+        if !plan.deletions.isEmpty {
+            isWaitingToDelete = true
+            // A paused transfer isn't going to finish on its own; don't wait on it.
+            while transfers.contains(where: { !$0.status.isFinal && $0.status != .paused }), !deletionsCalledOff {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            isWaitingToDelete = false
+
+            let unfinished = transfers.filter { $0.status != .completed }.count
+            if deletionsCalledOff {
+                deletionOutcome = "Deletions were skipped."
+            } else if unfinished > 0 {
+                deletionOutcome = "\(unfinished) transfer\(unfinished == 1 ? "" : "s") didn\u{2019}t finish, so nothing was deleted."
+            } else {
+                let failed = await delete(plan.deletions, remotePath: remotePath, uploading: plan.direction == .upload)
+                let deleted = plan.deletions.count - failed
+                deletionOutcome = "\(deleted) item\(deleted == 1 ? "" : "s") deleted"
+                    + (failed > 0 ? ", \(failed) could not be deleted." : ".")
+            }
+        }
+
+        var parts: [String] = []
+        if !transfers.isEmpty {
+            parts.append("\(transfers.count) transfer\(transfers.count == 1 ? "" : "s") \(plan.deletions.isEmpty ? "queued" : "run").")
+        }
+        if let deletionOutcome { parts.append(deletionOutcome) }
+        phase = .done(parts.isEmpty ? "Nothing needed doing." : parts.joined(separator: " "))
         onApplied?()
     }
 
-    private static func outcome(of plan: SyncPlan, failedDeletions: Int) -> String {
-        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
-        var parts: [String] = []
-        if !plan.transfers.isEmpty { parts.append("\(count(plan.transfers.count, "transfer")) queued") }
-        let deleted = plan.deletions.count - failedDeletions
-        if deleted > 0 { parts.append("\(count(deleted, "item")) deleted") }
-        if failedDeletions > 0 { parts.append("\(count(failedDeletions, "item")) could not be deleted") }
-        return parts.isEmpty ? "Nothing needed doing." : parts.joined(separator: ", ") + "."
+    /// Returns how many deletions failed.
+    private func delete(_ deletions: [SyncAction], remotePath: @Sendable (String) -> String, uploading: Bool) async -> Int {
+        if uploading {
+            let doomed = deletions.map { (remotePath($0.relativePath), $0.isDirectory) }
+            let failed = try? await queue.withOwnConnection(to: connection) { client in
+                var failed = 0
+                for (path, isDirectory) in doomed {
+                    do { try await client.delete(at: path, isDirectory: isDirectory) } catch { failed += 1 }
+                }
+                return failed
+            }
+            return failed ?? deletions.count      // couldn't even connect
+        }
+        var failed = 0
+        for deletion in deletions {
+            do { try trash(localRoot.appending(path: deletion.relativePath)) } catch { failed += 1 }
+        }
+        return failed
     }
 }

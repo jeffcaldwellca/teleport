@@ -92,4 +92,18 @@ final class FTPListingTests: XCTestCase {
         let parsed = FTPListingParser.listDate("Jan", "2", "10:00", now: utcDate(2026, 1, 3))
         XCTAssertEqual(parsed, utcDate(2026, 1, 2, 10, 0))
     }
+
+    // MARK: - MLSD symlinks
+
+    /// Servers spell a symlink's type several ways. Taking one for a plain
+    /// file would have a sync treat the link as a file to replace or delete.
+    func test_mlsd_recognisesEverySymlinkSpelling() {
+        for type in ["OS.unix=symlink", "os.unix=slink", "OS.unix=slink:/srv/releases/3", "OS.unix=slink:../shared"] {
+            let item = FTPListingParser.mlsdLine("type=\(type);size=11;modify=20240115103000; current", basePath: "/var/www")
+            XCTAssertEqual(item?.isSymlink, true, type)
+            XCTAssertEqual(item?.name, "current", type)
+        }
+        let plain = FTPListingParser.mlsdLine("type=file;size=11;modify=20240115103000; a.txt", basePath: "/var/www")
+        XCTAssertEqual(plain?.isSymlink, false)
+    }
 }

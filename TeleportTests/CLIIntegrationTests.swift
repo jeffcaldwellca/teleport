@@ -428,17 +428,55 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertTrue(try sync(fixture).stdout.contains("Already in sync"))
     }
 
-    func test_sync_continuesPastAFileItCannotRead_andExitsNonZero() throws {
+    /// One file can't be read. Everything else is still transferred — but
+    /// with part of the sync having failed, nothing is deleted: the
+    /// destination must not be left with neither the old nor the new.
+    func test_sync_afterAFailedFile_transfersTheRest_butDeletesNothing() throws {
         try requireServers()
         let fixture = try syncFixture()
-        let unreadable = fixture.local.appending(path: "css/site.css")
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
-        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+        XCTAssertEqual(try sync(fixture).exitCode, 0)
 
-        let result = try sync(fixture)
+        // Rename index.html → home.html locally, and make the new file unreadable.
+        let renamed = fixture.local.appending(path: "home.html")
+        try FileManager.default.moveItem(at: fixture.local.appending(path: "index.html"), to: renamed)
+        try Data("new page".utf8).write(to: fixture.local.appending(path: "about.html"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: renamed.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: renamed.path) }
+
+        let result = try sync(fixture, ["--delete"])
 
         XCTAssertEqual(result.exitCode, 1, result.stderr)
-        XCTAssertTrue(result.stderr.contains("failed: upload css/site.css"), result.stderr)
-        XCTAssertEqual(lines(result.stdout, starting: "upload "), ["upload index.html", "upload js/app.js"])
+        XCTAssertTrue(result.stderr.contains("failed: upload home.html"), result.stderr)
+        XCTAssertEqual(lines(result.stdout, starting: "upload "), ["upload about.html"])
+        XCTAssertEqual(lines(result.stdout, starting: "delete "), [], "index.html must survive: its replacement never arrived")
+        XCTAssertTrue(result.stderr.lowercased().contains("nothing was deleted"), result.stderr)
+
+        // Once the file can be read, the same command finishes the job.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: renamed.path)
+        let retry = try sync(fixture, ["--delete"])
+        XCTAssertEqual(retry.exitCode, 0, retry.stderr)
+        XCTAssertEqual(lines(retry.stdout, starting: "upload "), ["upload home.html"])
+        XCTAssertEqual(lines(retry.stdout, starting: "delete "), ["delete index.html"])
+    }
+
+    /// A change that leaves the size the same is only visible in the times —
+    /// on the FTP server that means past a listing that is to the minute and
+    /// in the server's time zone.
+    func test_sync_noticesASameSizeEdit_onBothServers() throws {
+        try requireServers()
+        for ftp in [false, true] {
+            let fixture = try syncFixture(ftp: ftp)
+            XCTAssertEqual(try sync(fixture).exitCode, 0)
+            XCTAssertTrue(try sync(fixture).stdout.contains("Already in sync"), "ftp: \(ftp)")
+
+            let page = fixture.local.appending(path: "index.html")
+            let original = try Data(contentsOf: page)
+            try Data(String(repeating: "x", count: original.count).utf8).write(to: page)
+            // Clearly later than the upload, whatever the clocks are doing.
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(120)], ofItemAtPath: page.path)
+
+            let result = try sync(fixture)
+            XCTAssertEqual(lines(result.stdout, starting: "upload "), ["upload index.html"], "ftp: \(ftp) — \(result.stdout)")
+        }
     }
 }

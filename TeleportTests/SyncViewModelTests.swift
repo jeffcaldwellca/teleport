@@ -14,7 +14,10 @@ private final class RecordingTreeClient: RemoteClient, @unchecked Sendable {
 
     let tree: [String: [FileItem]]
     let log: Log
-    init(tree: [String: [FileItem]], log: Log) { self.tree = tree; self.log = log }
+    let failingUploads: Set<String>
+    init(tree: [String: [FileItem]], log: Log, failingUploads: Set<String> = []) {
+        self.tree = tree; self.log = log; self.failingUploads = failingUploads
+    }
 
     func listDirectory(at absolutePath: String) async throws -> [FileItem] {
         guard let entries = tree[absolutePath] else { throw RemoteClientError.fileNotFound(absolutePath) }
@@ -25,7 +28,11 @@ private final class RecordingTreeClient: RemoteClient, @unchecked Sendable {
         log.record("\(isDirectory ? "rmdir" : "rm") \(absolutePath)")
     }
     func upload(from localURL: URL, remotePath: String, resume: Bool,
-                progress: @escaping @Sendable (Int64, Int64) -> Void) async throws { log.record("upload \(remotePath)") }
+                progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
+        // A refusal the queue treats as final, so the test needn't sit through retries.
+        if failingUploads.contains(remotePath) { throw RemoteClientError.authenticationRejected("scripted") }
+        log.record("upload \(remotePath)")
+    }
     func download(remotePath: String, to localURL: URL, resume: Bool,
                   progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         log.record("download \(remotePath)")
@@ -40,7 +47,10 @@ private final class RecordingTreeClient: RemoteClient, @unchecked Sendable {
     func setOwnership(owner: String, group: String, at absolutePath: String) async throws {}
     func remoteModifiedDate(at remotePath: String) async -> Date? { nil }
     func setModifiedDate(_ date: Date, at remotePath: String) async {}
-    func fileExists(at remotePath: String) async -> Bool { false }
+    /// As a real server would answer: a file in the tree exists.
+    func fileExists(at remotePath: String) async -> Bool {
+        tree.values.contains { $0.contains { $0.path == remotePath } }
+    }
 }
 
 @MainActor
@@ -79,11 +89,11 @@ final class SyncViewModelTests: XCTestCase {
         try Data(contents.utf8).write(to: url)
     }
 
-    private func makeModel(remote tree: [String: [FileItem]]) -> SyncViewModel {
+    private func makeModel(remote tree: [String: [FileItem]], failingUploads: Set<String> = []) -> SyncViewModel {
         let log = self.log!
         queue = TransferQueueViewModel(
             passwordProvider: { _ in "" },
-            clientFactory: { _, _ in RecordingTreeClient(tree: tree, log: log) }
+            clientFactory: { _, _ in RecordingTreeClient(tree: tree, log: log, failingUploads: failingUploads) }
         )
         return SyncViewModel(connection: connection, localRoot: localRoot, remoteRoot: "/var/www", queue: queue,
                              trash: { [unowned self] in trashed.append($0.lastPathComponent) })
@@ -153,6 +163,76 @@ final class SyncViewModelTests: XCTestCase {
         guard case .done = model.phase else { return XCTFail("Expected done, got \(model.phase)") }
         try await waitUntil("uploads") { self.queue.tasks.allSatisfy { $0.status == .completed } }
         XCTAssertEqual(log.calls(starting: "upload").sorted(), ["upload /var/www/css/site.css", "upload /var/www/index.html"])
+        XCTAssertTrue(log.calls(starting: "rm").isEmpty)
+    }
+
+    /// The files being replaced exist on the server — the case where the
+    /// queue would normally stop and ask. A sync has already decided.
+    func test_apply_overwritesExistingFiles_withoutRaisingAConflict() async throws {
+        let savedConflict = Preferences.shared.defaultConflict
+        Preferences.shared.defaultConflict = .ask
+        defer { Preferences.shared.defaultConflict = savedConflict }
+        try write("index.html", "changed, and longer")
+        let model = makeModel(remote: ["/var/www": [file("/var/www/index.html")]])
+        await model.compare()
+
+        await model.apply()
+
+        try await waitUntil("upload or a conflict prompt") {
+            self.queue.pendingConflict != nil || self.queue.tasks.allSatisfy { $0.status.isFinal }
+        }
+        XCTAssertNil(queue.pendingConflict)
+        XCTAssertEqual(queue.tasks.map(\.status), [.completed])
+        XCTAssertEqual(log.calls(starting: "upload"), ["upload /var/www/index.html"])
+    }
+
+    /// Deleting first and transferring later would, if a transfer then
+    /// failed, leave the destination with neither the old file nor the new.
+    func test_apply_deletesOnlyAfterTheTransfersHaveSucceeded() async throws {
+        try write("index.html")
+        try write("home.html", "renamed page")
+        let model = makeModel(remote: ["/var/www": [file("/var/www/index.html"), file("/var/www/old.html")]])
+        model.deleteExtraneous = true
+        await model.compare()
+
+        await model.apply()
+
+        XCTAssertEqual(queue.tasks.map(\.status), [.completed], "Deletions waited for the upload")
+        let calls = log.calls.filter { $0.hasPrefix("upload") || $0.hasPrefix("rm") }
+        XCTAssertEqual(calls, ["upload /var/www/home.html", "rm /var/www/old.html"])
+        guard case .done = model.phase else { return XCTFail("Expected done, got \(model.phase)") }
+    }
+
+    func test_apply_whenATransferFails_deletesNothing_andSaysSo() async throws {
+        try write("index.html")
+        try write("home.html", "renamed page")
+        let model = makeModel(
+            remote: ["/var/www": [file("/var/www/index.html"), file("/var/www/old.html")]],
+            failingUploads: ["/var/www/home.html"]
+        )
+        model.deleteExtraneous = true
+        await model.compare()
+
+        await model.apply()
+
+        XCTAssertTrue(log.calls(starting: "rm").isEmpty, "\(log.calls)")
+        guard case .done(let message) = model.phase else { return XCTFail("Expected done, got \(model.phase)") }
+        XCTAssertTrue(message.lowercased().contains("nothing was deleted"), message)
+    }
+
+    func test_apply_deletionsCanBeCalledOffWhileTransfersAreStillRunning() async throws {
+        try write("index.html")
+        try write("home.html", "renamed page")
+        let model = makeModel(remote: ["/var/www": [file("/var/www/index.html"), file("/var/www/old.html")]])
+        model.deleteExtraneous = true
+        await model.compare()
+
+        model.skipDeletions()          // e.g. pressed while the queue is still working
+        await model.apply()
+
+        // The transfers carry on regardless; only the deletions are dropped.
+        try await waitUntil("upload") { self.queue.tasks.allSatisfy { $0.status == .completed } }
+        XCTAssertEqual(log.calls(starting: "upload"), ["upload /var/www/home.html"])
         XCTAssertTrue(log.calls(starting: "rm").isEmpty)
     }
 

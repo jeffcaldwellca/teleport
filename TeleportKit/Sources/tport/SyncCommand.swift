@@ -97,6 +97,9 @@ struct SyncCommand: AsyncParsableCommand {
 
         let remoteTimes = Dictionary(comparison.remote.map { ($0.relativePath, $0.modified) }, uniquingKeysWith: { first, _ in first })
         var failures = 0
+        /// Decided when the first deletion comes up: true if something
+        /// before it failed.
+        var deletionsSkipped: Bool?
         func attempt(_ label: String, _ work: () async throws -> Void) async {
             do {
                 try await work()
@@ -144,6 +147,12 @@ struct SyncCommand: AsyncParsableCommand {
                     }
                 }
             case .delete:
+                // Deletions come last in the plan. If anything before them
+                // failed, leave the destination as it is: a renamed file is
+                // "transfer the new name, delete the old", and deleting the
+                // old after the new failed to arrive would lose it.
+                if deletionsSkipped == nil { deletionsSkipped = failures > 0 }
+                if deletionsSkipped == true { continue }
                 await attempt("delete \(action.relativePath)") {
                     if direction == .up {
                         try await client.delete(at: remotePath, isDirectory: action.isDirectory)
@@ -156,7 +165,12 @@ struct SyncCommand: AsyncParsableCommand {
             }
         }
 
-        say("Done: \(summary(of: plan, transferVerb: transferVerb)).")
+        if deletionsSkipped == true {
+            FileHandle.standardError.write(Data(
+                "Some items failed, so nothing was deleted. Fix them and run the same command again.\n".utf8))
+        } else {
+            say("Done: \(summary(of: plan, transferVerb: transferVerb)).")
+        }
         if failures > 0 { throw Incomplete(failures: failures) }
     }
 

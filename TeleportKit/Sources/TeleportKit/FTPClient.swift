@@ -1136,7 +1136,9 @@ public enum FTPListingParser {
             case "type":
                 let v = String(kv[1]).lowercased()
                 isDir     = v == "dir" || v == "cdir" || v == "pdir"
-                isSymlink = v == "os.unix=symlink"
+                // Spelled "OS.unix=symlink" or "OS.unix=slink[:<target>]",
+                // depending on the server.
+                isSymlink = v == "os.unix=symlink" || v.hasPrefix("os.unix=slink")
             case "size":    size     = Int64(kv[1])
             case "modify":  modified = mlsdDate(String(kv[1]))
             case "unix.mode": perms  = String(kv[1])
