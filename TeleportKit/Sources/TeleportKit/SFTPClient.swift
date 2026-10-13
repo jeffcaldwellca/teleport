@@ -8,6 +8,7 @@ import Citadel
 import NIOCore
 import NIOPosix
 import NIOSSH
+import Logging
 import Darwin
 
 public actor SFTPClient: RemoteClient {
@@ -47,6 +48,14 @@ public actor SFTPClient: RemoteClient {
         self.keyReader = keyReader
         self.onUnknownHostKey = onUnknownHostKey
     }
+
+    /// Citadel logs every request at `info`; with swift-log's default handler
+    /// that lands on stderr, burying tport's own output.
+    private static let logger: Logger = {
+        var logger = Logger(label: "teleport.sftp")
+        logger.logLevel = .warning
+        return logger
+    }()
 
     // MARK: - Connect
 
@@ -90,7 +99,7 @@ public actor SFTPClient: RemoteClient {
         ssh = client
 
         do {
-            sftp = try await client.openSFTP()
+            sftp = try await client.openSFTP(logger: Self.logger)
         } catch {
             throw translateConnectFailure(error)
         }
@@ -273,6 +282,11 @@ public actor SFTPClient: RemoteClient {
         let startOffset = UInt64(DownloadStaging.resumeOffset(for: localURL, resume: resume, total: total))
 
         let file = try await sftp.openFile(filePath: remotePath, flags: .read)
+        // Large files are read over several SFTP channels at once (see
+        // `downloadChannels`); `files[0]` is the primary handle.
+        let extras = total - Int64(startOffset) >= Self.multiChannelThreshold
+            ? await openExtraReadChannels(for: remotePath) : []
+        let files = [file] + extras.map(\.file)
         do {
             // Written to a staging file (see DownloadStaging); not truncated
             // when resuming so prior bytes survive.
@@ -280,20 +294,48 @@ public actor SFTPClient: RemoteClient {
             defer { try? fh.close() }
             if startOffset > 0 { try fh.seek(toOffset: startOffset) }
 
-            var offset = startOffset
+            var offset = startOffset          // next byte to write locally
+            var nextRequest = startOffset     // next offset to ask the server for
             let chunkSize = Self.transferChunkSize
             progress(Int64(offset), total)
 
+            // Keep several read requests in flight (see `pipelineDepth`) and
+            // write their replies in order. Without a known size there's no
+            // telling where to stop asking, so that case stays one at a time.
+            let depth = total > 0 ? Self.pipelineDepth : 1
+            var inFlight: [Task<ByteBuffer, Error>] = []
+            var requestCount = 0
+            defer { inFlight.forEach { $0.cancel() } }
+
             while true {
                 try Task.checkCancellation()
-                var buf = try await file.read(from: offset, length: UInt32(chunkSize))
-                guard buf.readableBytes > 0 else { break }
+                while inFlight.count < depth,
+                      total > 0 ? nextRequest < UInt64(total) : inFlight.isEmpty {
+                    let at = nextRequest
+                    let source = files[requestCount % files.count]
+                    requestCount += 1
+                    inFlight.append(Task { try await source.read(from: at, length: UInt32(chunkSize)) })
+                    nextRequest += UInt64(chunkSize)
+                }
+                guard !inFlight.isEmpty else { break }       // everything requested and written
+                var buf = try await inFlight.removeFirst().value
+                guard buf.readableBytes > 0 else { break }   // EOF
                 let chunk = buf.readData(length: buf.readableBytes) ?? Data()
                 try fh.write(contentsOf: chunk)   // throwing write: disk-full must fail the transfer
                 offset += UInt64(chunk.count)
                 progress(Int64(offset), total)
+
+                // A short read mid-file: the requests already in flight assumed
+                // a full chunk here, so drop them and ask again from where the
+                // data really ends.
+                if chunk.count < chunkSize, !inFlight.isEmpty {
+                    inFlight.forEach { $0.cancel() }
+                    inFlight.removeAll()
+                    nextRequest = offset
+                }
             }
             try await file.close()
+            await closeExtraReadChannels(extras)
 
             // Integrity check: EOF alone isn't proof we got the whole file if
             // the server reported a size up front.
@@ -306,12 +348,56 @@ public actor SFTPClient: RemoteClient {
             try DownloadStaging.commit(to: localURL)
         } catch {
             try? await file.close()
+            await closeExtraReadChannels(extras)
             DownloadStaging.discardEmptyPartial(for: localURL)
             throw error
         }
     }
 
-    private static let transferChunkSize: Int = 32 * 1024
+    private typealias ReadChannel = (client: Citadel.SFTPClient, file: SFTPFile)
+
+    /// Open additional SFTP channels on this SSH connection, each with its own
+    /// handle on `remotePath`. Best effort: a server that refuses more
+    /// channels (e.g. a low `MaxSessions`) just leaves the download on fewer.
+    private func openExtraReadChannels(for remotePath: String) async -> [ReadChannel] {
+        guard let ssh else { return [] }
+        var channels: [ReadChannel] = []
+        for _ in 1..<Self.downloadChannels {
+            guard let client = try? await ssh.openSFTP(logger: Self.logger) else { break }
+            guard let file = try? await client.openFile(filePath: remotePath, flags: .read) else {
+                try? await client.close()
+                break
+            }
+            channels.append((client, file))
+        }
+        return channels
+    }
+
+    private func closeExtraReadChannels(_ channels: [ReadChannel]) async {
+        for channel in channels {
+            try? await channel.file.close()
+            try? await channel.client.close()
+        }
+    }
+
+    /// Bytes per SFTP read/write request. Citadel splits writes at 32,000
+    /// bytes, so anything larger would cost an extra round trip per chunk.
+    private static let transferChunkSize: Int = 32_000
+
+    /// Read/write requests kept in flight at once (~1 MB). SFTP answers each
+    /// request individually; waiting for every reply before sending the next
+    /// caps throughput at one chunk per network round trip.
+    private static let pipelineDepth = 32
+
+    /// SFTP channels a large download is spread across. SwiftNIO SSH fixes
+    /// each channel's receive window at 128 KB, so a single channel can take
+    /// in at most that much per network round trip no matter how many reads
+    /// are pipelined; every extra channel adds another window. Kept well
+    /// under OpenSSH's default `MaxSessions` of 10.
+    private static let downloadChannels = 6
+
+    /// Downloads smaller than this aren't worth the extra channel setup.
+    private static let multiChannelThreshold: Int64 = 4 * 1024 * 1024
 
     // MARK: - File Existence Check
 
@@ -357,14 +443,31 @@ public actor SFTPClient: RemoteClient {
             var offset = startOffset
             let allocator = ByteBufferAllocator()
             progress(Int64(offset), total)
+
+            // Keep several write requests in flight (see `pipelineDepth`);
+            // progress advances as the oldest one is acknowledged.
+            var inFlight: [(end: UInt64, write: Task<Void, Error>)] = []
+            defer { inFlight.forEach { $0.write.cancel() } }
+
             while true {
                 try Task.checkCancellation()
                 let chunk = fh.readData(ofLength: chunkSize)
                 if chunk.isEmpty { break }
                 let buf = allocator.buffer(bytes: chunk)
-                try await file.write(buf, at: offset)
+                let at = offset
                 offset += UInt64(chunk.count)
-                progress(Int64(offset), total)
+                inFlight.append((offset, Task { try await file.write(buf, at: at) }))
+                if inFlight.count >= Self.pipelineDepth {
+                    let oldest = inFlight.removeFirst()
+                    try await oldest.write.value
+                    progress(Int64(oldest.end), total)
+                }
+            }
+            while !inFlight.isEmpty {
+                try Task.checkCancellation()
+                let oldest = inFlight.removeFirst()
+                try await oldest.write.value
+                progress(Int64(oldest.end), total)
             }
             try await file.close()
 
