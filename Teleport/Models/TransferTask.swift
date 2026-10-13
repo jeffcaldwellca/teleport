@@ -74,6 +74,20 @@ final class TransferTask: Identifiable {
     /// user resumes a paused task, where attempt-0 would otherwise truncate.
     var resumeOnNextAttempt = false
 
+    /// The "destination already exists" question has been answered (or there
+    /// was nothing to ask). Tracked per task, not per attempt: a retry must
+    /// neither repeat the question nor skip it because an earlier attempt
+    /// died before reaching it.
+    var conflictSettled = false
+
+    /// The user chose auto-rename for an upload; the free remote name is
+    /// picked once a live connection is available.
+    var needsUniqueRemotePath = false
+
+    /// Bytes may already have been written by an earlier attempt, so the next
+    /// one should resume rather than start over.
+    var transferStarted = false
+
     /// Predetermined conflict resolution (skips the dialog). Used by the
     /// remote-edit auto-upload, which must always overwrite its own file.
     var conflictBehavior: ConflictResolution? = nil
