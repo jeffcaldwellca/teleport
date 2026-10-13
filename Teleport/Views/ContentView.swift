@@ -101,6 +101,9 @@ struct ContentView: View {
             guard let path = note.userInfo?["path"] as? String else { return }
             Task { await localBrowser.loadDirectory(path: path) }
         }
+        .onChange(of: localBrowser.currentPath, initial: true) { _, path in
+            appState.localPanePath = path
+        }
         .onReceive(NotificationCenter.default.publisher(for: .switchPane)) { _ in
             // Only meaningful when a remote pane exists.
             guard appState.activeSession != nil else { appState.focusedPane = .local; return }

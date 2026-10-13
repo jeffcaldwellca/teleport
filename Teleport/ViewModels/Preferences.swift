@@ -20,15 +20,15 @@ final class Preferences {
         static let fileListTextSize       = "pref.fileListTextSize"      // raw value of FileListTextSize
     }
 
-    // "Desktop" was removed as a choice: under the App Sandbox it silently
-    // resolved to the app container's Desktop folder, so downloads appeared to
-    // vanish. A stored "desktop" value falls back to .downloads on read.
+    // Downloads started from the remote pane land in the folder the local
+    // pane is showing, like every two-pane client. Older builds stored
+    // "downloads" (and before that "desktop") here; both read as .localPane.
     enum DownloadDestinationChoice: String, CaseIterable, Identifiable {
-        case downloads, ask
+        case localPane, ask
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .downloads: return "Downloads"
+            case .localPane: return "Local pane\u{2019}s folder"
             case .ask:       return "Ask each time"
             }
         }
@@ -116,7 +116,7 @@ final class Preferences {
         get {
             DownloadDestinationChoice(
                 rawValue: defaults.string(forKey: Keys.downloadDestination) ?? ""
-            ) ?? .downloads
+            ) ?? .localPane
         }
         set { defaults.set(newValue.rawValue, forKey: Keys.downloadDestination) }
     }

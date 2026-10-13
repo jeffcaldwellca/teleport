@@ -68,12 +68,4 @@ final class LocalFileService {
     func homeDirectory() -> URL {
         fm.homeDirectoryForCurrentUser
     }
-
-    /// The user's real Downloads folder — covered by the
-    /// `files.downloads.read-write` entitlement, so writes land where the
-    /// user expects even under the App Sandbox.
-    func downloadsDirectory() -> URL {
-        fm.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? homeDirectory()
-    }
 }
