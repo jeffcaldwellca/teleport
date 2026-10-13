@@ -55,6 +55,9 @@ tport ls sftp://user@example.com/ --identity ~/.ssh/id_ed25519
 
 # Check connectivity and auth only
 tport test sftp://user@example.com
+
+# FTPS server with a self-signed certificate: trust it once, then it's remembered
+tport ls ftps://user@example.com/ --accept-untrusted-cert
 ```
 
 Other subcommands: `mkdir`, `rm`, `mv`, `chmod`, `chown`, `stat`. Run `tport --help`

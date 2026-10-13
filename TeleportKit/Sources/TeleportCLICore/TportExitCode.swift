@@ -32,6 +32,10 @@ public enum TportExitCode: Int32 {
                 return .authFailed
             case .connectionFailed:
                 return .connectionFailed
+            case .untrustedCertificate, .certificateChanged:
+                // Same meaning as an SSH host-key failure: the server's
+                // identity isn't trusted.
+                return .hostKey
             default:
                 return .generalFailure
             }

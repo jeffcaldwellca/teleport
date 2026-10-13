@@ -9,12 +9,19 @@ import Citadel
 /// tests and other short-lived, isolated trust decisions.
 public actor SSHHostKeyStore {
 
-    /// Recomputes `defaultAppSupportURL` fresh on every persist, not just at
+    /// Recomputes the Application Support URL fresh on every persist, not just at
     /// `.shared`'s first access — so a transient failure to resolve/create the
     /// Application Support directory (disk full, container not yet mounted)
     /// self-heals on the next write instead of permanently disabling
     /// persistence for the rest of the process.
-    public static let shared = SSHHostKeyStore(storeURLProvider: { defaultAppSupportURL })
+    public static let shared = SSHHostKeyStore(storeURLProvider: { appSupportURL(file: "known_hosts.json") })
+
+    /// FTPS certificates the user chose to trust although the system doesn't
+    /// (self-signed, private CA, …). Same `host:port` → fingerprint shape as
+    /// SSH host keys, kept in a file of its own.
+    public static let tlsCertificates = SSHHostKeyStore(
+        storeURLProvider: { appSupportURL(file: "trusted_certificates.json") }
+    )
 
     private struct Entry: Codable {
         var fingerprint: String   // "SHA256:<hex>"
@@ -103,7 +110,7 @@ public actor SSHHostKeyStore {
 
     private static func key(host: String, port: Int) -> String { "\(host):\(port)" }
 
-    private static var defaultAppSupportURL: URL? {
+    private static func appSupportURL(file: String) -> URL? {
         guard let support = try? FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

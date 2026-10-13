@@ -135,7 +135,7 @@ final class BrowserViewModel {
         }
         if let e = error as? FTPError {
             switch e {
-            case .permissionDenied, .authFailed: return false
+            case .permissionDenied, .authFailed, .untrustedCertificate, .certificateChanged: return false
             default: return true
             }
         }

@@ -5,15 +5,13 @@ import TeleportKit
 
 /// Live-server integration tests for the transfer engine. Skipped unless
 /// `TELEPORT_IT=1` is in the environment (pass `TEST_RUNNER_TELEPORT_IT=1` to
-/// xcodebuild) with local test servers running:
-///
-///   docker run -d --name teleport-it-ftp -p 2121:21 -p 30000-30009:30000-30009 \
-///     -e USERS="testuser|testpass" -e ADDRESS=127.0.0.1 \
-///     -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server
-///   docker run -d --name teleport-it-sftp -p 2222:22 atmoz/sftp testuser:testpass:::upload
+/// xcodebuild) with the local docker test servers running — start them with
+/// `scripts/start-test-servers.sh` (FTP, SFTP, and explicit + implicit FTPS
+/// behind a self-signed certificate).
 ///
 /// These verify the properties the app promises: byte-exact round trips,
-/// working resume (REST / offset reads), and conflict primitives.
+/// working resume (REST / offset reads), conflict primitives, and that a
+/// server's identity is confirmed before credentials are sent.
 final class TransferIntegrationTests: XCTestCase {
 
     private static let password = "testpass"
@@ -27,6 +25,11 @@ final class TransferIntegrationTests: XCTestCase {
     private func ftpConnection() -> Connection {
         Connection(name: "it-ftp", host: "127.0.0.1", port: 2121,
                    username: "testuser", connectionProtocol: .ftp)
+    }
+
+    private func ftpsConnection(port: Int = 2122) -> Connection {
+        Connection(name: "it-ftps", host: "127.0.0.1", port: port,
+                   username: "testuser", connectionProtocol: .ftps)
     }
 
     private func sftpConnection() -> Connection {
@@ -61,24 +64,7 @@ final class TransferIntegrationTests: XCTestCase {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Only `test_queue_pauseResume_sftp_producesIdenticalFile` still needs this:
-    /// it exercises the queue end-to-end through the app's real
-    /// `RemoteClientFactory`, which wires `SFTPClient`'s `onUnknownHostKey` to
-    /// this UI dialog. Every other SFTP test constructs `SFTPClient` directly
-    /// via `sftpTestClient()` below and injects trust without a dialog.
-    private func autoAcceptHostKeys() -> Task<Void, Never> {
-        Task { @MainActor in
-            while !Task.isCancelled {
-                if HostKeyConfirmation.shared.pending != nil {
-                    HostKeyConfirmation.shared.accept()
-                }
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-        }
-    }
-
-    /// An `SFTPClient` for direct (non-queue) tests: an in-memory-only
-    /// known-hosts store (never persisted, so each test run starts with no
+    /// An `SFTPClient` with an in-memory-only known-hosts store (never persisted, so each test run starts with no
     /// prior trust) and an unconditional accept in place of the GUI dialog.
     private func sftpTestClient() -> SFTPClient {
         SFTPClient(
@@ -103,6 +89,102 @@ final class TransferIntegrationTests: XCTestCase {
         let originalHash   = try sha256(original)
         let downloadedHash = try sha256(downloaded)
         XCTAssertEqual(originalHash, downloadedHash, "Round-tripped file must be byte-identical")
+    }
+
+    // MARK: - FTPS
+
+    /// Trusts whatever certificate the test server presents, in a throwaway store.
+    private func ftpsTestClient(port: Int = 2122) -> FTPClient {
+        FTPClient(
+            connection: ftpsConnection(port: port),
+            password: Self.password,
+            certificateStore: SSHHostKeyStore(storeURL: nil),
+            onUntrustedCertificate: { _ in true }
+        )
+    }
+
+    /// Exercises the whole FTPS data path against vsftpd: PROT P, the
+    /// data-channel handshake, and TLS session reuse (which the server requires).
+    func test_ftps_uploadDownloadRoundTrip() async throws {
+        try requireServers()
+        let dir = try makeTempDir()
+        let original = try writeRandomFile(in: dir, name: "original.bin", size: 1_500_000)
+
+        let client = ftpsTestClient()
+        try await client.connect()
+        defer { Task { await client.disconnect() } }
+
+        let listing = try await client.listDirectory(at: "/ftp/testuser")
+        XCTAssertNotNil(listing)
+        try await roundTrip(client: client,
+                            remotePath: "/ftp/testuser/ftps-\(UUID().uuidString).bin",
+                            localDir: dir, original: original)
+    }
+
+    func test_ftps_implicitTLS_uploadDownloadRoundTrip() async throws {
+        try requireServers()
+        let dir = try makeTempDir()
+        let original = try writeRandomFile(in: dir, name: "original.bin", size: 400_000)
+
+        let client = ftpsTestClient(port: 990)
+        try await client.connect()
+        defer { Task { await client.disconnect() } }
+
+        try await roundTrip(client: client,
+                            remotePath: "/ftp/testuser/implicit-\(UUID().uuidString).bin",
+                            localDir: dir, original: original)
+    }
+
+    func test_ftps_untrustedCertificate_failsClosedWhenDeclined() async throws {
+        try requireServers()
+        let client = FTPClient(
+            connection: ftpsConnection(),
+            password: Self.password,
+            certificateStore: SSHHostKeyStore(storeURL: nil),
+            onUntrustedCertificate: { _ in false }
+        )
+        do {
+            try await client.connect()
+            XCTFail("A declined certificate must not connect")
+        } catch FTPError.untrustedCertificate {
+            // expected
+        }
+    }
+
+    func test_ftps_acceptedCertificate_isRememberedAndNotAskedAgain() async throws {
+        try requireServers()
+        let store = SSHHostKeyStore(storeURL: nil)
+
+        let first = FTPClient(connection: ftpsConnection(), password: Self.password,
+                              certificateStore: store, onUntrustedCertificate: { _ in true })
+        try await first.connect()
+        await first.disconnect()
+
+        let second = FTPClient(connection: ftpsConnection(), password: Self.password,
+                               certificateStore: store, onUntrustedCertificate: { _ in
+            XCTFail("An already-accepted certificate must not prompt again")
+            return false
+        })
+        try await second.connect()
+        await second.disconnect()
+    }
+
+    func test_ftps_certificateDifferentFromTheAcceptedOne_isRejectedWithoutAsking() async throws {
+        try requireServers()
+        let store = SSHHostKeyStore(storeURL: nil)
+        try await store.record(host: "127.0.0.1", port: 2122, fingerprint: "SHA256:" + String(repeating: "00", count: 32))
+
+        let client = FTPClient(connection: ftpsConnection(), password: Self.password,
+                               certificateStore: store, onUntrustedCertificate: { _ in
+            XCTFail("A changed certificate must be refused outright, not re-offered")
+            return true
+        })
+        do {
+            try await client.connect()
+            XCTFail("A changed certificate must not connect")
+        } catch FTPError.certificateChanged {
+            // expected
+        }
     }
 
     // MARK: - FTP
@@ -328,9 +410,6 @@ final class TransferIntegrationTests: XCTestCase {
     @MainActor
     func test_queue_cancelledOverwrite_sftp_keepsExistingFileAndRemovesPartial() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
-
         let dir = try makeTempDir()
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 12_000_000)
         let remotePath = "/upload/cancel-\(UUID().uuidString).bin"
@@ -343,7 +422,10 @@ final class TransferIntegrationTests: XCTestCase {
         let dest = dir.appending(component: "existing.bin")
         try Data("existing contents".utf8).write(to: dest)
 
-        let queue = TransferQueueViewModel(passwordProvider: { _ in Self.password })
+        let queue = TransferQueueViewModel(
+            passwordProvider: { _ in Self.password },
+            clientFactory: { [self] _, _ in sftpTestClient() }
+        )
         let task = try XCTUnwrap(queue.enqueue(
             connection: sftpConnection(), direction: .download,
             localURL: dest, remotePath: remotePath, conflictBehavior: .overwrite
@@ -363,9 +445,6 @@ final class TransferIntegrationTests: XCTestCase {
     @MainActor
     func test_queue_pauseResume_sftp_producesIdenticalFile() async throws {
         try requireServers()
-        let accept = autoAcceptHostKeys()
-        defer { accept.cancel() }
-
         let dir = try makeTempDir()
         // Large enough that the emulated docker sshd can't finish before pause.
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 12_000_000)
@@ -376,7 +455,10 @@ final class TransferIntegrationTests: XCTestCase {
         try await client.upload(from: original, remotePath: remotePath, resume: false) { _, _ in }
         await client.disconnect()
 
-        let queue = TransferQueueViewModel(passwordProvider: { _ in Self.password })
+        let queue = TransferQueueViewModel(
+            passwordProvider: { _ in Self.password },
+            clientFactory: { [self] _, _ in sftpTestClient() }
+        )
         let dest = dir.appending(component: "queued.bin")
         let task = try XCTUnwrap(queue.enqueue(
             connection: sftpConnection(), direction: .download,

@@ -2,13 +2,17 @@ import Foundation
 import TeleportKit
 import Observation
 
-/// Information shown to the user when they're being asked to trust a brand-new
-/// SSH host key (TOFU first-use prompt).
+/// Information shown to the user when they're being asked to trust a server's
+/// identity for the first time (TOFU prompt): a brand-new SSH host key, or an
+/// FTPS certificate the system doesn't trust.
 struct HostKeyConfirmationRequest: Identifiable, Sendable {
     let id = UUID()
     let host: String
     let port: Int
     let fingerprint: String
+    /// Set for an FTPS certificate: why the system rejected it. Nil for an
+    /// SSH host key.
+    var certificateReason: String? = nil
 }
 
 /// MainActor singleton that bridges the SFTP-client connection flow to a
@@ -28,7 +32,8 @@ final class HostKeyConfirmation {
     private init() {}
 
     /// Show the prompt and wait for the user's decision.
-    func confirm(host: String, port: Int, fingerprint: String) async -> Bool {
+    func confirm(host: String, port: Int, fingerprint: String,
+                 certificateReason: String? = nil) async -> Bool {
         // If another prompt is already in flight, reject the new one rather
         // than overwriting state — should never happen in practice, but keep
         // the contract simple.
@@ -37,7 +42,8 @@ final class HostKeyConfirmation {
         return await withCheckedContinuation { cont in
             self.continuation = cont
             self.pending = HostKeyConfirmationRequest(
-                host: host, port: port, fingerprint: fingerprint
+                host: host, port: port, fingerprint: fingerprint,
+                certificateReason: certificateReason
             )
         }
     }

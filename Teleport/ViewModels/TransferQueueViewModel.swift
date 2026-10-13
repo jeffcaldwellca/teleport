@@ -655,7 +655,7 @@ final class TransferQueueViewModel {
         }
         if let e = error as? FTPError {
             switch e {
-            case .authFailed, .permissionDenied: return true
+            case .authFailed, .permissionDenied, .untrustedCertificate, .certificateChanged: return true
             default: return false
             }
         }
