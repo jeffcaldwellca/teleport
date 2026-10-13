@@ -24,6 +24,18 @@ public actor SFTPClient: RemoteClient {
     private var ssh: SSHClient?
     private var sftp: Citadel.SFTPClient?
 
+    /// The event loop this client's connection runs on. Each connection
+    /// attempt gets one of its own because shutting it down is the only way
+    /// to close a connection Citadel has given up on: after a failed
+    /// handshake or rejected login Citadel neither closes the socket nor
+    /// hands it back, and the server keeps such a session open until its
+    /// login timeout — a few of those and sshd starts turning connections away.
+    private let eventLoopGroup = OwnedEventLoopGroup()
+
+    /// Set while the configured key file is the credential being offered, to
+    /// explain an RSA rejection (see `connect`).
+    private var offeringRSAKeyFile = false
+
     /// - Parameters:
     ///   - hostKeyStore: where trusted host-key fingerprints are looked up and
     ///     recorded. Defaults to `.shared` (the app's Application Support
@@ -104,24 +116,43 @@ public actor SFTPClient: RemoteClient {
             // the key file read and, if need be, its passphrase asked for.
             case .keyFile:          offer = try await keyFileOffer()
             }
+            let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
             do {
                 connected = try await SSHClient.connect(
                     host: connection.host,
                     port: connection.port,
                     authenticationMethod: .custom(SSHAuthSequence(username: connection.username, offers: [offer])),
                     hostKeyValidator: .custom(validator),
-                    reconnect: .never
+                    reconnect: .never,
+                    group: group
                 )
+                eventLoopGroup.adopt(group)
                 break
-            } catch let mismatch as HostKeyMismatchError {
-                throw RemoteClientError.hostKeyMismatch(
-                    host: connection.host, port: connection.port,
-                    expected: mismatch.expected, actual: mismatch.actual
-                )
             } catch {
+                // Closes the abandoned connection (see `eventLoopGroup`).
+                try? await group.shutdownGracefully()
+
+                if let mismatch = error as? HostKeyMismatchError {
+                    throw RemoteClientError.hostKeyMismatch(
+                        host: connection.host, port: connection.port,
+                        expected: mismatch.expected, actual: mismatch.actual
+                    )
+                }
+                let hasMore = index < credentials.count - 1
+                // An agent key that couldn't be used to sign (the user said
+                // no, the token is unplugged) is one more key that didn't
+                // work — not a reason to give up on the rest.
+                if error is SSHAgent.Failure, hasMore { continue }
+
                 let failure = translateConnectFailure(error)
-                if case RemoteClientError.authenticationFailed = failure, index < credentials.count - 1 {
-                    continue   // rejected: try the next credential
+                guard case RemoteClientError.authenticationFailed = failure else { throw failure }
+                if hasMore { continue }   // rejected: try the next credential
+                if case .keyFile = credential, offeringRSAKeyFile {
+                    throw RemoteClientError.authenticationRejected(
+                        "The server rejected this RSA key. Teleport can only use RSA keys with the older SHA-1 " +
+                        "signature, which current OpenSSH servers refuse even for keys they know. Use an ed25519 " +
+                        "or ECDSA key for this server."
+                    )
                 }
                 throw failure
             }
@@ -132,6 +163,7 @@ public actor SFTPClient: RemoteClient {
         do {
             sftp = try await client.openSFTP(logger: Self.logger)
         } catch {
+            await disconnect()
             throw translateConnectFailure(error)
         }
     }
@@ -253,6 +285,8 @@ public actor SFTPClient: RemoteClient {
             )
         }
 
+        offeringRSAKeyFile = SSHPrivateKeyFile.isRSA(keyText)
+
         var passphrase: String?
         var asked = 0
         while true {
@@ -284,6 +318,7 @@ public actor SFTPClient: RemoteClient {
         try? await ssh?.close()
         sftp = nil
         ssh = nil
+        await eventLoopGroup.shutdown()
     }
 
     // MARK: - List Directory
@@ -601,6 +636,36 @@ public actor SFTPClient: RemoteClient {
         try await sftp.setAttributes(at: absolutePath, to: attrs)
     }
 
+}
+
+// MARK: - Owned event loop group
+
+/// Holds the event loop group of a live connection and shuts it down when the
+/// connection ends — or when the client is simply dropped without
+/// `disconnect()`, so its thread doesn't outlive it.
+private final class OwnedEventLoopGroup: @unchecked Sendable {
+    private let lock = NSLock()
+    private var group: MultiThreadedEventLoopGroup?
+
+    func adopt(_ newGroup: MultiThreadedEventLoopGroup) {
+        let previous = lock.withLock { () -> MultiThreadedEventLoopGroup? in
+            defer { group = newGroup }
+            return group
+        }
+        previous?.shutdownGracefully { _ in }
+    }
+
+    func shutdown() async {
+        let current = lock.withLock { () -> MultiThreadedEventLoopGroup? in
+            defer { group = nil }
+            return group
+        }
+        try? await current?.shutdownGracefully()
+    }
+
+    deinit {
+        group?.shutdownGracefully { _ in }
+    }
 }
 
 // MARK: - Host key probe
