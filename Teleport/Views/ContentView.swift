@@ -88,6 +88,13 @@ struct ContentView: View {
         )) { request in
             HostKeyConfirmationSheet(request: request)
         }
+        .sheet(item: Binding(
+            get: { PassphrasePrompt.shared.pending },
+            // Dismissed without an answer: the connection gives up on the key.
+            set: { if $0 == nil { PassphrasePrompt.shared.cancel() } }
+        )) { request in
+            PassphraseSheet(request: request)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .newConnection)) { _ in
             appState.editingConnection = nil
             appState.showingConnectionEditor = true

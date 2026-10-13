@@ -43,6 +43,9 @@ enum RemoteClientFactory {
                 },
                 onUnknownHostKey: { host, port, fingerprint in
                     await HostKeyConfirmation.shared.confirm(host: host, port: port, fingerprint: fingerprint)
+                },
+                passphraseProvider: { keyPath, retry in
+                    await PassphrasePrompt.shared.passphrase(for: connection.id, keyPath: keyPath, retry: retry)
                 }
             )
         case .ftp, .ftps:

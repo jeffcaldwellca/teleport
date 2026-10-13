@@ -21,9 +21,29 @@ enum KeychainError: LocalizedError {
 struct KeychainService {
     static let service = "com.teleport.app"
 
+    /// Account name for a connection's SSH-key passphrase (its password uses
+    /// the bare UUID).
+    static func passphraseAccount(for connectionID: UUID) -> String {
+        "\(connectionID.uuidString).key-passphrase"
+    }
+
     static func save(password: String, for connectionID: UUID) throws {
-        let data = Data(password.utf8)
-        let key = connectionID.uuidString
+        try save(secret: password, account: connectionID.uuidString)
+    }
+
+    static func load(for connectionID: UUID) throws -> String {
+        try load(account: connectionID.uuidString)
+    }
+
+    /// Delete the keychain item for `connectionID`. Returns `true` on success
+    /// or when no item existed; `false` if the keychain refused the delete.
+    @discardableResult
+    static func delete(for connectionID: UUID) -> Bool {
+        delete(account: connectionID.uuidString)
+    }
+
+    static func save(secret: String, account key: String) throws {
+        let data = Data(secret.utf8)
 
         // Try to update first
         let query: [String: Any] = [
@@ -52,11 +72,11 @@ struct KeychainService {
         }
     }
 
-    static func load(for connectionID: UUID) throws -> String {
+    static func load(account: String) throws -> String {
         let query: [String: Any] = [
             kSecClass as String:            kSecClassGenericPassword,
             kSecAttrService as String:      service,
-            kSecAttrAccount as String:      connectionID.uuidString,
+            kSecAttrAccount as String:      account,
             kSecReturnData as String:       true,
             kSecMatchLimit as String:       kSecMatchLimitOne
         ]
@@ -66,10 +86,10 @@ struct KeychainService {
 
         switch status {
         case errSecSuccess:
-            guard let data = result as? Data, let password = String(data: data, encoding: .utf8) else {
+            guard let data = result as? Data, let secret = String(data: data, encoding: .utf8) else {
                 throw KeychainError.unexpectedData
             }
-            return password
+            return secret
         case errSecItemNotFound:
             throw KeychainError.itemNotFound
         default:
@@ -77,14 +97,12 @@ struct KeychainService {
         }
     }
 
-    /// Delete the keychain item for `connectionID`. Returns `true` on success
-    /// or when no item existed; `false` if the keychain refused the delete.
     @discardableResult
-    static func delete(for connectionID: UUID) -> Bool {
+    static func delete(account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: connectionID.uuidString
+            kSecAttrAccount as String: account
         ]
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
