@@ -988,7 +988,7 @@ final class TransferQueueViewModel {
         // Parents sort before children ("a" < "a/b"), so creation order is safe.
         // Failures are tolerated here (the directory may already exist); a
         // genuinely missing parent surfaces as a visible failed upload below.
-        try await withPreparationClient(for: connection) { client in
+        try await withOwnConnection(to: connection) { client in
             try? await client.createDirectory(at: root)
             for dir in relativeDirs.sorted() {
                 try? await client.createDirectory(at: "\(root)/\(dir)")
@@ -998,23 +998,26 @@ final class TransferQueueViewModel {
                      items: files.map { ($0.local, "\(root)/\($0.relative)") })
     }
 
-    /// Folder transfers need a connection before any file is queued (to make
-    /// the remote folders, or to walk the remote tree). They open one of
-    /// their own rather than borrow the browsing session's: the transfer has
-    /// to survive that session's tab being closed halfway through.
-    private func withPreparationClient(
-        for connection: Connection,
-        _ body: (RemoteClient) async throws -> Void
-    ) async throws {
+    /// Run `body` on a connection opened just for it and closed afterwards.
+    ///
+    /// For work that has to outlive the browsing tab it was started from: a
+    /// folder transfer's preparation (making the remote folders, walking the
+    /// remote tree) and drags out to Finder. Borrowing the session's own
+    /// connection would break them the moment that tab is closed.
+    func withOwnConnection<T: Sendable>(
+        to connection: Connection,
+        _ body: @Sendable (RemoteClient) async throws -> T
+    ) async throws -> T {
         let client = clientFactory(connection, passwordProvider(connection))
         do {
             try await client.connect()
-            try await body(client)
+            let result = try await body(client)
+            await client.disconnect()
+            return result
         } catch {
             await client.disconnect()
             throw error
         }
-        await client.disconnect()
     }
 
     /// Synchronous local tree walk (directory enumeration isn't async-safe).
@@ -1071,11 +1074,11 @@ final class TransferQueueViewModel {
             throw FolderTransferError.unsafeName(folderName)
         }
 
-        let fm = FileManager.default
-        var pendingDirs: [(remote: String, local: URL)] = [(remotePath, localParent.appending(component: safeName))]
-        var files: [(remote: String, local: URL)] = []
-
-        try await withPreparationClient(for: connection) { client in
+        let root = localParent.appending(component: safeName)
+        let files = try await withOwnConnection(to: connection) { client in
+            let fm = FileManager.default
+            var pendingDirs: [(remote: String, local: URL)] = [(remotePath, root)]
+            var files: [(remote: String, local: URL)] = []
             while let (remoteDir, localDir) = pendingDirs.popLast() {
                 try fm.createDirectory(at: localDir, withIntermediateDirectories: true)
                 for item in try await client.listDirectory(at: remoteDir) {
@@ -1097,6 +1100,7 @@ final class TransferQueueViewModel {
                     }
                 }
             }
+            return files
         }
 
         enqueueBatch(connection: connection, direction: .download,

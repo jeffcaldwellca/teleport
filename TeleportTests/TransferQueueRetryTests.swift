@@ -29,6 +29,9 @@ private final class ScriptedClient: RemoteClient, @unchecked Sendable {
         }
         func recordConnect() { lock.withLock { _connectCount += 1 } }
         var connectCount: Int { lock.withLock { _connectCount } }
+        private var _disconnectCount = 0
+        func recordDisconnect() { lock.withLock { _disconnectCount += 1 } }
+        var disconnectCount: Int { lock.withLock { _disconnectCount } }
 
         func shouldFailConnect() -> Bool {
             lock.withLock {
@@ -51,7 +54,7 @@ private final class ScriptedClient: RemoteClient, @unchecked Sendable {
     func ping() async throws {
         if script.shouldFailPing() { throw RemoteClientError.notConnected }
     }
-    func disconnect() async {}
+    func disconnect() async { script.recordDisconnect() }
     func listDirectory(at absolutePath: String) async throws -> [FileItem] { [] }
     func download(remotePath: String, to localURL: URL, resume: Bool,
                   progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {}
@@ -239,5 +242,30 @@ final class TransferQueueRetryTests: XCTestCase {
 
         XCTAssertEqual(queue.tasks.count, 2_500)
         try await waitUntil("all uploaded", timeout: 60) { queue.tasks.allSatisfy { $0.status == .completed } }
+    }
+
+    /// Work that must outlive a browsing tab (a drag out to Finder, a folder
+    /// transfer's preparation) gets a connection of its own, always closed.
+    func test_withOwnConnection_connectsRunsAndDisconnects_evenWhenTheWorkThrows() async throws {
+        let script = ScriptedClient.Script(destinationsExist: false)
+        let queue = TransferQueueViewModel(
+            passwordProvider: { _ in "" },
+            clientFactory: { _, _ in ScriptedClient(script: script) }
+        )
+        let connection = Connection(host: "example.invalid")
+
+        let answer = try await queue.withOwnConnection(to: connection) { client in
+            await client.fileExists(at: "/anything") ? "exists" : "missing"
+        }
+        XCTAssertEqual(answer, "missing")
+        XCTAssertEqual(script.connectCount, 1)
+        XCTAssertEqual(script.disconnectCount, 1)
+
+        struct Boom: Error {}
+        do {
+            try await queue.withOwnConnection(to: connection) { _ in throw Boom() }
+            XCTFail("The work's error should propagate")
+        } catch is Boom {}
+        XCTAssertEqual(script.disconnectCount, 2)
     }
 }

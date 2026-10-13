@@ -11,12 +11,14 @@ extension UTType {
 }
 
 /// Codable stand-in for a remote item used in pane-to-pane drags. Carries no
-/// client — the drop target resolves the active session, so a stale drag can't
-/// smuggle a dead connection.
+/// client — only the id of the session it was dragged from, which the drop
+/// target looks up among the open sessions. A stale drag can't smuggle a dead
+/// connection, and a drop can't land on a different server than its source.
 struct RemoteFileRef: Codable, Transferable {
     let remotePath: String
     let fileName: String
     let isDirectory: Bool
+    var sessionID: UUID? = nil
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .teleportRemoteItem)

@@ -32,6 +32,13 @@ final class AppState {
     }
 
     private let clientFactory: (Connection, String) -> RemoteClient
+    let removeKeyBookmark: @MainActor (UUID) -> Void
+
+    /// The open session with this id, if it is still open.
+    func session(withID id: RemoteSession.ID?) -> RemoteSession? {
+        guard let id else { return nil }
+        return sessions.first { $0.id == id }
+    }
 
     // Sidebar / sheet state
     var selectedConnectionID: Connection.ID? = nil
@@ -50,11 +57,17 @@ final class AppState {
 
     /// - Parameter clientFactory: builds the client for each browsing
     ///   session; tests substitute a scripted one.
+    ///   - removeKeyBookmark: drops the stored SSH-key bookmark of a deleted
+    ///     connection.
     init(
         connectionStore store: ConnectionStore = ConnectionStore(),
+        removeKeyBookmark: @escaping @MainActor (UUID) -> Void = {
+            try? BookmarkStore.shared.remove(name: BookmarkStore.sshKeyName(for: $0))
+        },
         clientFactory: @escaping (Connection, String) -> RemoteClient = RemoteClientFactory.make(for:password:)
     ) {
         connectionStore = store
+        self.removeKeyBookmark = removeKeyBookmark
         self.clientFactory = clientFactory
         transferQueue = TransferQueueViewModel(passwordProvider: { store.password(for: $0) })
 

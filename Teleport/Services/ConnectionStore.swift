@@ -1,14 +1,38 @@
 import Foundation
 import TeleportKit
 
+/// Where connection passwords are kept. The app uses the login Keychain;
+/// tests substitute an in-memory store so they never touch it.
+protocol ConnectionSecrets {
+    func savePassword(_ password: String, for connectionID: UUID) throws
+    func password(for connectionID: UUID) -> String?
+    func deletePassword(for connectionID: UUID)
+}
+
+struct KeychainConnectionSecrets: ConnectionSecrets {
+    func savePassword(_ password: String, for connectionID: UUID) throws {
+        try KeychainService.save(password: password, for: connectionID)
+    }
+    func password(for connectionID: UUID) -> String? { try? KeychainService.load(for: connectionID) }
+    func deletePassword(for connectionID: UUID) { KeychainService.delete(for: connectionID) }
+}
+
 @Observable
 final class ConnectionStore {
     private let defaultsKey = "com.teleport.connections"
     private(set) var connections: [Connection] = []
     private let defaults: UserDefaults
+    private let secrets: ConnectionSecrets
+    private let forgetPassphrase: @MainActor (UUID) -> Void
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        secrets: ConnectionSecrets = KeychainConnectionSecrets(),
+        forgetPassphrase: @escaping @MainActor (UUID) -> Void = { PassphrasePrompt.shared.forget($0) }
+    ) {
         self.defaults = defaults
+        self.secrets = secrets
+        self.forgetPassphrase = forgetPassphrase
         load()
     }
 
@@ -59,7 +83,7 @@ final class ConnectionStore {
     }
 
     func add(_ connection: Connection, password: String) throws {
-        try KeychainService.save(password: password, for: connection.id)
+        try secrets.savePassword(password, for: connection.id)
         connections.append(connection)
         persist()
     }
@@ -67,7 +91,7 @@ final class ConnectionStore {
     func update(_ connection: Connection, password: String?) throws {
         guard let index = connections.firstIndex(where: { $0.id == connection.id }) else { return }
         if let password = password {
-            try KeychainService.save(password: password, for: connection.id)
+            try secrets.savePassword(password, for: connection.id)
         }
         connections[index] = connection
         persist()
@@ -75,14 +99,14 @@ final class ConnectionStore {
 
     @MainActor
     func delete(_ connection: Connection) {
-        KeychainService.delete(for: connection.id)
-        PassphrasePrompt.shared.forget(connection.id)
+        secrets.deletePassword(for: connection.id)
+        forgetPassphrase(connection.id)
         connections.removeAll { $0.id == connection.id }
         persist()
     }
 
     func password(for connection: Connection) -> String {
-        (try? KeychainService.load(for: connection.id)) ?? ""
+        secrets.password(for: connection.id) ?? ""
     }
 
     func move(from source: IndexSet, to destination: Int) {

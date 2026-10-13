@@ -52,6 +52,10 @@ final class BrowserViewModel {
     }
     private var filterDebounce: Task<Void, Never>?
 
+    /// Where the list was scrolled when this pane was last on screen, so a
+    /// session's tab comes back the way it was left.
+    var savedScrollOffset: CGFloat = 0
+
     // Rename in-place
     var renamingItem:  FileItem? = nil
     var renameText:    String   = ""

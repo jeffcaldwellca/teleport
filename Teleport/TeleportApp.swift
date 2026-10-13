@@ -25,7 +25,7 @@ struct TeleportApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .commands {
-            TeleportCommands()
+            TeleportCommands(appState: appState)
         }
 
         Settings {
@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - App Commands
 
 struct TeleportCommands: Commands {
+    let appState: AppState
+
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Connection…") {
@@ -106,11 +108,13 @@ struct TeleportCommands: Commands {
                 NotificationCenter.default.post(name: .sessionNext, object: nil)
             }
             .keyboardShortcut("]", modifiers: [.command, .shift])
+            .disabled(appState.sessions.count < 2)
 
             Button("Previous Session") {
                 NotificationCenter.default.post(name: .sessionPrevious, object: nil)
             }
             .keyboardShortcut("[", modifiers: [.command, .shift])
+            .disabled(appState.sessions.count < 2)
 
             Divider()
 
@@ -118,6 +122,7 @@ struct TeleportCommands: Commands {
                 NotificationCenter.default.post(name: .sessionClose, object: nil)
             }
             .keyboardShortcut("w", modifiers: [.command, .shift])
+            .disabled(appState.activeSession == nil)
         }
 
         CommandMenu("View") {
