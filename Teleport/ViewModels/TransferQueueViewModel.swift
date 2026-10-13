@@ -151,13 +151,15 @@ final class TransferQueueViewModel {
     /// `conflictBehavior` applies to every one of them. Checks for duplicates
     /// against one precomputed set instead of rescanning the queue per file,
     /// which is quadratic and stalls the UI for thousands of items.
+    /// Returns the tasks it created (duplicates of pending transfers are dropped).
+    @discardableResult
     func enqueueBatch(
         connection: Connection,
         direction: TransferDirection,
         items: [(local: URL, remote: String)],
         conflictBehavior: ConflictResolution? = nil
-    ) {
-        guard !items.isEmpty else { return }
+    ) -> [TransferTask] {
+        guard !items.isEmpty else { return [] }
         if !tasks.contains(where: { !$0.status.isFinal }) {
             batchResolution = nil
         }
@@ -167,6 +169,7 @@ final class TransferQueueViewModel {
                 .filter { !$0.status.isFinal && $0.direction == direction }
                 .map { key($0.effectiveLocalURL, $0.effectiveRemotePath) }
         )
+        var created: [TransferTask] = []
         for item in items where pending.insert(key(item.local, item.remote)).inserted {
             let task = TransferTask(
                 connection: connection, direction: direction,
@@ -174,9 +177,11 @@ final class TransferQueueViewModel {
             )
             task.conflictBehavior = conflictBehavior
             tasks.append(task)
+            created.append(task)
         }
         setVisible(true)
         startWorkers()
+        return created
     }
 
     // MARK: - Queue Processing

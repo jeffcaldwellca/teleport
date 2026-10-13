@@ -45,9 +45,14 @@ struct SyncSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer()
-                Button(isDone ? "Close" : "Cancel", role: .cancel) { dismiss() }
+                if model.isWaitingToDelete {
+                    Button("Don\u{2019}t Delete") { model.skipDeletions() }
+                        .help("Let the transfers finish, but leave everything else at the destination in place")
+                }
+                // Closing while a sync is under way doesn't stop it.
+                Button(isDone || model.phase == .applying ? "Close" : "Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                if !isDone {
+                if !isDone && model.phase != .applying {
                     Button("Compare") { Task { await model.compare() } }
                         .disabled(isBusy)
                     Button("Sync") { startSync() }
@@ -147,7 +152,10 @@ struct SyncSheet: View {
         case .idle:              return "Compare the folders to see what syncing would do."
         case .comparing:         return "Comparing the two folders\u{2026}"
         case .ready:             return "The folders are already in sync."
-        case .applying:          return "Syncing\u{2026}"
+        case .applying:
+            return model.isWaitingToDelete
+                ? "Transferring\u{2026}\nItems are only deleted once every transfer has finished."
+                : "Syncing\u{2026}"
         case .done(let message): return message
         case .failed(let error): return error
         }

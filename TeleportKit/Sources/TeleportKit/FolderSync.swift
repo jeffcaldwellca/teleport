@@ -15,14 +15,19 @@ public struct SyncEntry: Equatable, Sendable {
     /// False when the time is only known to the minute (FTP servers that
     /// offer nothing better than `LIST`).
     public var modifiedHasSeconds: Bool
+    /// Something that is there but is neither looked into nor touched: a
+    /// symbolic link. Whatever sits under the same name on the other side is
+    /// left alone too.
+    public var isOpaque: Bool
 
     public init(relativePath: String, isDirectory: Bool, size: Int64? = nil,
-                modified: Date? = nil, modifiedHasSeconds: Bool = true) {
+                modified: Date? = nil, modifiedHasSeconds: Bool = true, isOpaque: Bool = false) {
         self.relativePath = relativePath
         self.isDirectory = isDirectory
         self.size = size
         self.modified = modified
         self.modifiedHasSeconds = modifiedHasSeconds
+        self.isOpaque = isOpaque
     }
 }
 
@@ -77,6 +82,9 @@ public struct SyncPlan: Equatable, Sendable {
     /// In execution order: folders to create (parents first), transfers,
     /// deletions (deepest first), then anything skipped.
     public var actions: [SyncAction]
+    /// Same-size files whose remote time is too imprecise to compare (see
+    /// `FolderSync.refine`). Empty once refined.
+    public var uncertain: [String] = []
 
     public var directories: [SyncAction] { actions.filter { $0.kind == .createDirectory } }
     public var transfers: [SyncAction] { actions.filter { $0.kind == .transfer } }
@@ -91,6 +99,7 @@ public enum FolderSyncError: LocalizedError, Equatable {
     case emptySourceWithDeletion
     case sourceMissing(String)
     case tooLarge(limit: Int)
+    case unreadable(String)
 
     public var errorDescription: String? {
         switch self {
@@ -101,6 +110,9 @@ public enum FolderSyncError: LocalizedError, Equatable {
             return "The folder \(path) doesn't exist."
         case .tooLarge(let limit):
             return "The folder contains more than \(limit) items. Sync it in smaller pieces."
+        case .unreadable(let path):
+            return "\(path) couldn\u{2019}t be read, so the folders can\u{2019}t be compared safely. " +
+                   "Nothing was changed."
         }
     }
 }
@@ -110,8 +122,14 @@ public enum FolderSync {
     /// Most entries a side may have.
     public static let defaultLimit = 10_000
 
-    /// Always ignored, on both sides.
-    public static let builtInExcludes = [".DS_Store"]
+    /// Always ignored, on both sides: Finder's metadata, and the staging
+    /// files of downloads that are still in flight.
+    public static let builtInExcludes = [".DS_Store", "*.part"]
+
+    /// A same-size pair whose remote time is only known to the minute can't
+    /// be judged when the two times are this close: such listings (FTP
+    /// `LIST`) are also in the server's own time zone, up to 14 hours off.
+    static let timeZoneReach: TimeInterval = 15 * 3600
 
     /// Seconds a source may be "newer" by before it counts: file systems and
     /// protocols round times differently.
@@ -129,11 +147,13 @@ public enum FolderSync {
         func isExcluded(_ entry: SyncEntry) -> Bool {
             patterns.contains { matches(exclude: $0, relativePath: entry.relativePath) }
         }
+        /// Names that are one and the same on a case-insensitive file system.
+        func fold(_ path: String) -> String { path.precomposedStringWithCanonicalMapping.lowercased() }
 
         let allSource = direction == .upload ? local : remote
         let allDestination = direction == .upload ? remote : local
-        let source = allSource.filter { !isExcluded($0) }
-        let destination = allDestination.filter { !isExcluded($0) }
+        let source = allSource.filter { !isExcluded($0) && !$0.isOpaque }
+        let destination = allDestination.filter { !isExcluded($0) && !$0.isOpaque }
 
         if options.deleteExtraneous, source.isEmpty, !options.allowEmptySource {
             throw FolderSyncError.emptySourceWithDeletion
@@ -142,20 +162,58 @@ public enum FolderSync {
         let sourceByPath = Dictionary(source.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
         let destinationByPath = Dictionary(destination.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // A file on one side where the other has a folder. Neither is
-        // replaced, and nothing beneath that path is touched on either side.
-        let conflicts = Set(source.compactMap { entry -> String? in
-            guard let other = destinationByPath[entry.relativePath], other.isDirectory != entry.isDirectory else { return nil }
-            return entry.relativePath
-        })
-        func isUnderConflict(_ path: String) -> Bool {
-            conflicts.contains { path == $0 || path.hasPrefix($0 + "/") }
+        // --- Paths that are left alone, with everything beneath them, on both sides.
+        // Each is recorded case-folded, with why and how to show it.
+        var untouchable: [String: (path: String, isDirectory: Bool, reason: String?)] = [:]
+
+        // A file on one side where the other has a folder: replacing either
+        // would destroy something.
+        for entry in source {
+            guard let other = destinationByPath[entry.relativePath], other.isDirectory != entry.isDirectory else { continue }
+            let (here, there) = direction == .upload ? ("locally", "on the server") : ("on the server", "locally")
+            untouchable[fold(entry.relativePath)] = (
+                entry.relativePath, entry.isDirectory,
+                entry.isDirectory ? "a folder \(here) but a file \(there)" : "a file \(here) but a folder \(there)"
+            )
         }
 
-        // Destination folders that hold something excluded can't be removed
-        // without taking the excluded item with them.
+        // Names that differ only in letter case. On a case-insensitive disk
+        // (the Mac default; Windows servers) they are the same item, so
+        // "transfer the one, delete the other" would destroy it.
+        var sourceSpellings: [String: Set<String>] = [:], destinationSpellings: [String: Set<String>] = [:]
+        for entry in source { sourceSpellings[fold(entry.relativePath), default: []].insert(entry.relativePath) }
+        for entry in destination { destinationSpellings[fold(entry.relativePath), default: []].insert(entry.relativePath) }
+        for entry in source {
+            let key = fold(entry.relativePath)
+            guard untouchable[key] == nil, let there = destinationSpellings[key], there != sourceSpellings[key] else { continue }
+            untouchable[key] = (entry.relativePath, entry.isDirectory,
+                                "the two sides spell this name with different letter case")
+        }
+
+        // Symbolic links are never followed or copied; nor is whatever has
+        // the link's name on the other side replaced or removed.
+        for entry in allSource + allDestination where entry.isOpaque && !isExcluded(entry) {
+            let key = fold(entry.relativePath)
+            guard untouchable[key] == nil else { continue }
+            let hasCounterpart = sourceSpellings[key] != nil || destinationSpellings[key] != nil
+            untouchable[key] = (entry.relativePath, false,
+                                hasCounterpart ? "a symbolic link on one side; left alone" : nil)
+        }
+
+        let untouchableKeys = Set(untouchable.keys)
+        func isUntouchable(_ path: String) -> Bool {
+            var key = fold(path)
+            while true {
+                if untouchableKeys.contains(key) { return true }
+                guard let slash = key.lastIndex(of: "/") else { return false }
+                key = String(key[..<slash])
+            }
+        }
+
+        // Destination folders that hold something excluded or otherwise left
+        // alone can't be removed without taking that item with them.
         var protectedFolders: Set<String> = []
-        for entry in allDestination where isExcluded(entry) {
+        for entry in allDestination where isExcluded(entry) || entry.isOpaque {
             var path = entry.relativePath
             while let slash = path.lastIndex(of: "/") {
                 path = String(path[..<slash])
@@ -164,36 +222,42 @@ public enum FolderSync {
         }
 
         var create: [SyncAction] = [], transfer: [SyncAction] = [], delete: [SyncAction] = [], skip: [SyncAction] = []
+        var uncertain: [String] = []
+
+        // One line per left-alone item — the topmost, not everything under it.
+        for (key, item) in untouchable.sorted(by: { $0.value.path < $1.value.path }) {
+            guard let reason = item.reason else { continue }
+            let parent = key.lastIndex(of: "/").map { String(key[..<$0]) }
+            if let parent, isUntouchable(parent) { continue }
+            skip.append(SyncAction(relativePath: item.path, kind: .skip, isDirectory: item.isDirectory, size: nil, reason: reason))
+        }
 
         for entry in source.sorted(by: { $0.relativePath < $1.relativePath }) {
             let path = entry.relativePath
-            if conflicts.contains(path) {
-                let (here, there) = direction == .upload ? ("locally", "on the server") : ("on the server", "locally")
-                skip.append(SyncAction(
-                    relativePath: path, kind: .skip, isDirectory: entry.isDirectory, size: nil,
-                    reason: entry.isDirectory ? "a folder \(here) but a file \(there)" : "a file \(here) but a folder \(there)"
-                ))
-                continue
-            }
-            if isUnderConflict(path) { continue }
+            if isUntouchable(path) { continue }
 
             let existing = destinationByPath[path]
             if entry.isDirectory {
                 if existing == nil {
                     create.append(SyncAction(relativePath: path, kind: .createDirectory, isDirectory: true, size: nil, reason: "new folder"))
                 }
-            } else if let reason = reasonToTransfer(entry, over: existing, options: options) {
+                continue
+            }
+            if let reason = reasonToTransfer(entry, over: existing, options: options) {
                 transfer.append(SyncAction(relativePath: path, kind: .transfer, isDirectory: false, size: entry.size, reason: reason))
+            }
+            if let existing, isTimeUncertain(entry, existing, options: options) {
+                uncertain.append(path)
             }
         }
 
         if options.deleteExtraneous {
-            let extraneous = destination.filter { sourceByPath[$0.relativePath] == nil && !isUnderConflict($0.relativePath) }
+            let extraneous = destination.filter { sourceByPath[$0.relativePath] == nil && !isUntouchable($0.relativePath) }
             // Deepest first, so a folder is empty by the time its turn comes.
             for entry in extraneous.sorted(by: Self.deeperFirst) {
                 if entry.isDirectory, protectedFolders.contains(entry.relativePath) {
                     skip.append(SyncAction(relativePath: entry.relativePath, kind: .skip, isDirectory: true, size: nil,
-                                           reason: "not in the source, but holds excluded items"))
+                                           reason: "not in the source, but holds items that are left alone"))
                 } else {
                     delete.append(SyncAction(relativePath: entry.relativePath, kind: .delete, isDirectory: entry.isDirectory,
                                              size: entry.size, reason: "not in the source"))
@@ -201,7 +265,15 @@ public enum FolderSync {
             }
         }
 
-        return SyncPlan(direction: direction, actions: create + transfer + delete + skip)
+        return SyncPlan(direction: direction, actions: create + transfer + delete + skip, uncertain: uncertain)
+    }
+
+    /// A same-size pair whose times can't be compared from the listing alone.
+    private static func isTimeUncertain(_ source: SyncEntry, _ existing: SyncEntry, options: SyncOptions) -> Bool {
+        guard !options.sizeOnly, !(source.modifiedHasSeconds && existing.modifiedHasSeconds),
+              let a = source.size, let b = existing.size, a == b,
+              let sourceTime = source.modified, let existingTime = existing.modified else { return false }
+        return abs(sourceTime.timeIntervalSince(existingTime)) <= timeZoneReach
     }
 
     /// Why `source` should replace `existing`, or nil when they are in sync.
@@ -249,35 +321,41 @@ public enum FolderSync {
 
     // MARK: - Refining
 
-    /// Double-check transfers planned only because the source "looks newer"
-    /// than a remote file whose listed time is imprecise.
+    /// Settle the pairs the listing couldn't (`SyncPlan.uncertain`) by asking
+    /// the server for each file's exact modification time.
     ///
     /// FTP `LIST` reports times to the minute and in the server's own time
-    /// zone, so the listing can show a file hours older than it is. For those
-    /// files the exact time is fetched (`MDTM`); the ones that turn out not to
-    /// be older are dropped from the plan. Listings with exact times (SFTP,
-    /// MLSD) and transfers planned for any other reason cost nothing here.
+    /// zone, so a file can appear hours older or newer than it is: a recent
+    /// upload looks stale and is sent again on every run, or a same-size
+    /// local edit hides behind a copy that only looks newer. Only same-size
+    /// files changed within a time zone's reach of each other are asked
+    /// about; listings with exact times (SFTP, MLSD) cost nothing here.
     public static func refine(
         _ plan: SyncPlan, local: [SyncEntry], remote: [SyncEntry], remoteRoot: String, client: RemoteClient
     ) async -> SyncPlan {
+        guard !plan.uncertain.isEmpty else { return plan }
         let localByPath = Dictionary(local.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
         let remoteByPath = Dictionary(remote.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
-        var refined = plan
-        refined.actions = []
-        for action in plan.actions {
-            guard action.kind == .transfer, action.reason == "newer",
-                  let listed = remoteByPath[action.relativePath], !listed.modifiedHasSeconds,
-                  let localTime = localByPath[action.relativePath]?.modified,
-                  let exact = await client.remoteModifiedDate(at: joined(remoteRoot, action.relativePath)) else {
-                refined.actions.append(action)
-                continue
-            }
+        var transfers = Dictionary(plan.transfers.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
+
+        for path in plan.uncertain {
+            // No exact time to be had (no MDTM): the listing's verdict stands.
+            guard let localTime = localByPath[path]?.modified,
+                  let exact = await client.remoteModifiedDate(at: joined(remoteRoot, path)) else { continue }
             let sourceTime = plan.direction == .upload ? localTime : exact
             let destinationTime = plan.direction == .upload ? exact : localTime
             if sourceTime.timeIntervalSince(destinationTime) > tolerance {
-                refined.actions.append(action)
+                let size = (plan.direction == .upload ? localByPath[path] : remoteByPath[path])?.size
+                transfers[path] = SyncAction(relativePath: path, kind: .transfer, isDirectory: false, size: size, reason: "newer")
+            } else {
+                transfers[path] = nil
             }
         }
+
+        var refined = plan
+        refined.uncertain = []
+        refined.actions = plan.directories + transfers.values.sorted { $0.relativePath < $1.relativePath }
+            + plan.deletions + plan.skips
         return refined
     }
 
@@ -307,36 +385,52 @@ public enum FolderSync {
             throw FolderSyncError.sourceMissing(root.path)
         }
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: []) else {
+        // A folder that can't be read must stop the scan. Carrying on would
+        // report it as empty, and a sync with deletion on would then remove
+        // everything under it on the other side.
+        var unreadable: String?
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: keys, options: [],
+            errorHandler: { url, _ in
+                unreadable = unreadable ?? url.path
+                return false
+            }
+        ) else {
             throw FolderSyncError.sourceMissing(root.path)
         }
         let patterns = builtInExcludes + excludes
-        let baseCount = root.standardizedFileURL.pathComponents.count
         var entries: [SyncEntry] = []
 
         for case let url as URL in enumerator {
-            let values = try? url.resourceValues(forKeys: Set(keys))
-            if values?.isSymbolicLink == true {
-                enumerator.skipDescendants()
-                continue
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else {
+                throw FolderSyncError.unreadable(url.path)
             }
-            let components = url.standardizedFileURL.pathComponents.dropFirst(baseCount)
+            // The enumerator's depth says how many trailing components are
+            // inside the root. (Comparing against the root's own path breaks
+            // when that path runs through a link, as /var and /tmp do.)
+            let components = url.pathComponents.suffix(enumerator.level)
             guard !components.isEmpty, components.allSatisfy({ RemotePath.sanitizedFilename($0) != nil }) else {
                 enumerator.skipDescendants()
                 continue
             }
             let relative = components.joined(separator: "/")
-            let isFolder = values?.isDirectory == true
+            if values.isSymbolicLink == true {
+                enumerator.skipDescendants()
+                entries.append(SyncEntry(relativePath: relative, isDirectory: false, isOpaque: true))
+                continue
+            }
+            let isFolder = values.isDirectory == true
             entries.append(SyncEntry(
                 relativePath: relative, isDirectory: isFolder,
-                size: isFolder ? nil : (values?.fileSize).map(Int64.init),
-                modified: isFolder ? nil : values?.contentModificationDate
+                size: isFolder ? nil : values.fileSize.map(Int64.init),
+                modified: isFolder ? nil : values.contentModificationDate
             ))
             if entries.count > limit { throw FolderSyncError.tooLarge(limit: limit) }
             if patterns.contains(where: { matches(exclude: $0, relativePath: relative) }) {
                 enumerator.skipDescendants()
             }
         }
+        if let unreadable { throw FolderSyncError.unreadable(unreadable) }
         return entries
     }
 
@@ -358,13 +452,21 @@ public enum FolderSync {
             do {
                 items = try await client.listDirectory(at: directory)
             } catch {
-                if isRoot, missingRootIsEmpty { return [] }
+                // "Couldn't list it" only means "not there yet" if its parent
+                // agrees. A permission error or timeout on a folder that does
+                // exist must not pass for an empty destination.
+                if isRoot, missingRootIsEmpty, await !exists(root, on: client) { return [] }
                 throw error
             }
             isRoot = false
-            for item in items where !item.isSymlink {
+            for item in items {
                 guard let name = RemotePath.sanitizedFilename(item.name) else { continue }
                 let relative = prefix.isEmpty ? name : prefix + "/" + name
+                if item.isSymlink {
+                    entries.append(SyncEntry(relativePath: relative, isDirectory: false, isOpaque: true))
+                    if entries.count > limit { throw FolderSyncError.tooLarge(limit: limit) }
+                    continue
+                }
                 entries.append(SyncEntry(
                     relativePath: relative, isDirectory: item.isDirectory,
                     size: item.isDirectory ? nil : item.size,
@@ -384,6 +486,16 @@ public enum FolderSync {
         return entries
     }
 
+    /// Whether the remote folder `path` is listed by its parent. When the
+    /// parent can't be listed either, there is nothing to say it exists.
+    private static func exists(_ path: String, on client: RemoteClient) async -> Bool {
+        guard path != "/" else { return true }
+        let parent = (path as NSString).deletingLastPathComponent
+        let name = (path as NSString).lastPathComponent
+        guard let siblings = try? await client.listDirectory(at: parent.isEmpty ? "/" : parent) else { return false }
+        return siblings.contains { $0.name == name }
+    }
+
     // MARK: - Excludes
 
     /// Whether `pattern` excludes `relativePath` — itself or any folder above
@@ -391,13 +503,23 @@ public enum FolderSync {
     /// (`node_modules`, `*.log`); one with a slash against the path from the
     /// sync root (`build/cache`, `img/*.psd`). `*` and `?` are wildcards;
     /// matching is case-sensitive.
+    ///
+    /// rsync-style decorations are understood rather than silently matching
+    /// nothing: a trailing slash (`uploads/`) and a leading `./` are dropped,
+    /// and a leading slash (`/uploads`) anchors the pattern to the sync root.
     public static func matches(exclude pattern: String, relativePath: String) -> Bool {
-        let components = relativePath.split(separator: "/").map(String.init)
-        let anchored = pattern.contains("/")
+        var pattern = Substring(pattern)
+        while pattern.hasPrefix("./") { pattern = pattern.dropFirst(2) }
+        var anchored = pattern.hasPrefix("/")
+        while pattern.hasPrefix("/") { pattern = pattern.dropFirst() }
+        while pattern.hasSuffix("/") { pattern = pattern.dropLast() }
+        guard !pattern.isEmpty else { return false }
+        anchored = anchored || pattern.contains("/")
+
         var prefix = ""
-        for component in components {
+        for component in relativePath.split(separator: "/").map(String.init) {
             prefix = prefix.isEmpty ? component : prefix + "/" + component
-            if SSHConfig.glob(pattern, matches: anchored ? prefix : component, caseSensitive: true) { return true }
+            if SSHConfig.glob(String(pattern), matches: anchored ? prefix : component, caseSensitive: true) { return true }
         }
         return false
     }
