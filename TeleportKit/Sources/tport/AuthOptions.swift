@@ -10,8 +10,11 @@ struct AuthOptions: ParsableArguments {
     @Flag(name: .long, help: "Read the password as a single line from stdin.")
     var passwordStdin = false
 
-    @Option(name: .long, help: "Path to an SFTP private key (unencrypted OpenSSH ed25519 or RSA).")
+    @Option(name: .long, help: "Path to an SFTP private key (ed25519, ECDSA or RSA). A passphrase is read from TELEPORT_KEY_PASSPHRASE, or asked for when run from a terminal.")
     var identity: String?
+
+    @Flag(name: .long, help: "Don't use keys from ssh-agent. (By default they are tried when neither --identity nor a password is given.)")
+    var noAgent = false
 
     @Option(name: .long, help: "Path to the known-hosts trust file. Defaults to ~/.teleport/known_hosts.json.")
     var knownHosts: String?
@@ -41,6 +44,20 @@ struct AuthOptions: ParsableArguments {
         return ""
     }
 
+    /// The environment variable answers the first ask (so scripts work); a
+    /// retry after a wrong passphrase, or no variable at all, falls to an
+    /// interactive no-echo prompt — and to giving up when there's no terminal.
+    @Sendable
+    private static func keyPassphrase(keyPath: String, retry: Bool) async -> String? {
+        if !retry, let fromEnvironment = ProcessInfo.processInfo.environment["TELEPORT_KEY_PASSPHRASE"] {
+            return fromEnvironment
+        }
+        guard isatty(STDIN_FILENO) != 0 else { return nil }
+        let prompt = (retry ? "Wrong passphrase. " : "") + "Passphrase for \(keyPath): "
+        guard let entered = getpass(prompt) else { return nil }
+        return String(cString: entered)
+    }
+
     private static var defaultKnownHostsURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".teleport/known_hosts.json")
     }
@@ -60,6 +77,8 @@ struct AuthOptions: ParsableArguments {
         var connection = target.makeConnection()
         if let identity { connection.sshKeyPath = identity }
         let password = try resolvePassword(for: target)
+        // Like ssh: with nothing else to go on, use whatever the agent holds.
+        connection.useSSHAgent = !noAgent && identity == nil && password.isEmpty
 
         switch target.connectionProtocol {
         case .sftp:
@@ -67,7 +86,8 @@ struct AuthOptions: ParsableArguments {
                 connection: connection,
                 password: password,
                 hostKeyStore: makeHostKeyStore(),
-                onUnknownHostKey: { [acceptNewHostkey] _, _, _ in acceptNewHostkey }
+                onUnknownHostKey: { [acceptNewHostkey] _, _, _ in acceptNewHostkey },
+                passphraseProvider: Self.keyPassphrase
             )
         case .ftp, .ftps:
             return FTPClient(

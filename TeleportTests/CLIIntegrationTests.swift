@@ -25,10 +25,18 @@ final class CLIIntegrationTests: XCTestCase {
         return url
     }
 
-    private func run(_ args: [String]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+    /// - Parameter environment: variables to set for the child. The user's
+    ///   own `SSH_AUTH_SOCK` is always removed first so tests never reach
+    ///   their real ssh-agent.
+    private func run(_ args: [String], environment: [String: String] = [:]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
         let process = Process()
         process.executableURL = try tportBinaryURL()
         process.arguments = args
+        var env = ProcessInfo.processInfo.environment
+        env.removeValue(forKey: "SSH_AUTH_SOCK")
+        env.removeValue(forKey: "TELEPORT_KEY_PASSPHRASE")
+        process.environment = env.merging(environment) { _, new in new }
+        process.standardInput = FileHandle.nullDevice
         let stdout = Pipe(), stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
@@ -162,5 +170,74 @@ final class CLIIntegrationTests: XCTestCase {
         // server error as a failure.
         let second = try run(["mkdir", "--parents", "ftp://testuser:testpass@127.0.0.1:2121\(folder)"])
         XCTAssertEqual(second.exitCode, 0, second.stderr)
+    }
+
+    // MARK: - SSH keys
+
+    private static let keys = "/tmp/teleport-it-keys"
+
+    private func requireKeys() throws {
+        try requireServers()
+        guard FileManager.default.fileExists(atPath: Self.keys + "/ed25519") else {
+            throw XCTSkip("Run scripts/start-test-servers.sh to generate the test keys")
+        }
+    }
+
+    private func knownHostsFile() -> String {
+        FileManager.default.temporaryDirectory
+            .appending(component: "tport-it-known-hosts-\(UUID().uuidString).json").path
+    }
+
+    private func lsUpload(_ extra: [String], environment: [String: String] = [:]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        try run(["ls", "sftp://testuser@127.0.0.1:2222/upload",
+                 "--known-hosts", knownHostsFile(), "--accept-new-hostkey"] + extra,
+                environment: environment)
+    }
+
+    func test_identity_encrypted_readsPassphraseFromTheEnvironment() throws {
+        try requireKeys()
+        let result = try lsUpload(["--identity", Self.keys + "/ed25519_enc"],
+                                  environment: ["TELEPORT_KEY_PASSPHRASE": "test-passphrase"])
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+    }
+
+    func test_identity_encrypted_withNoPassphraseAndNoTerminal_failsSayingWhy() throws {
+        try requireKeys()
+        let result = try lsUpload(["--identity", Self.keys + "/ed25519_enc"])
+        XCTAssertEqual(result.exitCode, 3, result.stderr)   // authFailed
+        XCTAssertTrue(result.stderr.lowercased().contains("passphrase"), result.stderr)
+    }
+
+    /// Like `ssh`: with no key or password given, whatever ssh-agent holds is used.
+    func test_agent_isUsedByDefault_andNoAgentTurnsItOff() throws {
+        try requireKeys()
+        let socket = "/tmp/tp-it-cli-agent-\(UUID().uuidString.prefix(8)).sock"
+        let agent = Process()
+        agent.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-agent")
+        agent.arguments = ["-D", "-a", socket]
+        agent.standardOutput = FileHandle.nullDevice
+        agent.standardError = FileHandle.nullDevice
+        try agent.run()
+        addTeardownBlock {
+            agent.terminate()
+            try? FileManager.default.removeItem(atPath: socket)
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: socket), Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        let add = Process()
+        add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+        add.arguments = [Self.keys + "/ed25519"]
+        add.environment = ["SSH_AUTH_SOCK": socket]
+        add.standardOutput = FileHandle.nullDevice
+        add.standardError = FileHandle.nullDevice
+        try add.run()
+        add.waitUntilExit()
+        XCTAssertEqual(add.terminationStatus, 0)
+
+        let withAgent = try lsUpload([], environment: ["SSH_AUTH_SOCK": socket])
+        XCTAssertEqual(withAgent.exitCode, 0, withAgent.stderr)
+
+        let without = try lsUpload(["--no-agent"], environment: ["SSH_AUTH_SOCK": socket])
+        XCTAssertEqual(without.exitCode, 3, without.stderr)   // authFailed: nothing to offer
     }
 }

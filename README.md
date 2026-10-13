@@ -26,7 +26,7 @@ app that feels like one.
 
 ## Features
 
-- **FTP, FTPS, and SFTP** in one client, with SSH key authentication and host-key verification
+- **FTP, FTPS, and SFTP** in one client, with SSH keys (ed25519, ECDSA, RSA; passphrases and ssh-agent supported) and host-key verification
 - **`tport`**, a scriptable CLI, bundled with the app and installable from Settings
 - **Resume &amp; conflict handling** — interrupted transfers pick up where they left off, with overwrite/skip/if-newer policies
 - **Transfer queue** for tracking multiple in-flight uploads and downloads
@@ -50,8 +50,12 @@ tport get sftp://user@example.com/var/www/index.html ./index.html --resume
 # Upload a folder recursively, only overwriting older remote files
 tport put ./dist sftp://user@example.com/var/www --recursive --on-conflict ifNewer
 
-# Authenticate with an SSH key instead of a password
+# Authenticate with an SSH key instead of a password (you're asked for its
+# passphrase if it has one; scripts can set TELEPORT_KEY_PASSPHRASE)
 tport ls sftp://user@example.com/ --identity ~/.ssh/id_ed25519
+
+# With no key or password given, keys from ssh-agent are used, as with ssh
+tport ls sftp://user@example.com/
 
 # Check connectivity and auth only
 tport test sftp://user@example.com
