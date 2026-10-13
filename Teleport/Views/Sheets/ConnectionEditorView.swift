@@ -11,6 +11,7 @@ struct ConnectionEditorView: View {
     @State private var isTesting         = false
     @State private var testResult:         String? = nil
     @State private var testSuccess         = false
+    @State private var hasSavedPassphrase  = false
 
     init(existing: Connection?) {
         if let existing {
@@ -103,6 +104,22 @@ struct ConnectionEditorView: View {
                                 Button("Browse…") { browseForKey() }
                             }
                         }
+                        if hasSavedPassphrase {
+                            fieldRow("") {
+                                HStack(spacing: 8) {
+                                    Label("Passphrase saved", systemImage: "key.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Button("Forget") {
+                                        PassphrasePrompt.shared.forget(connection.id)
+                                        hasSavedPassphrase = false
+                                    }
+                                    .controlSize(.small)
+                                    .help("Remove this key\u{2019}s passphrase from the Keychain. You\u{2019}ll be asked for it the next time you connect.")
+                                    Spacer()
+                                }
+                            }
+                        }
                         fieldRow("") {
                             Toggle("Use ssh-agent", isOn: $connection.useSSHAgent)
                                 .toggleStyle(.checkbox)
@@ -178,6 +195,11 @@ struct ConnectionEditorView: View {
             if isEditing {
                 password = appState.connectionStore.password(for: connection)
             }
+            hasSavedPassphrase = PassphrasePrompt.shared.hasRememberedPassphrase(for: connection.id)
+        }
+        // Testing the connection may have just saved one.
+        .onChange(of: isTesting) { _, _ in
+            hasSavedPassphrase = PassphrasePrompt.shared.hasRememberedPassphrase(for: connection.id)
         }
         // Test Connection can hit a first-time SSH host key. The confirmation
         // sheet in ContentView can't present while this editor sheet is up, so
@@ -268,7 +290,7 @@ struct ConnectionEditorView: View {
         if panel.runModal() == .OK, let url = panel.url {
             connection.sshKeyPath = url.path
             // Capture a security-scoped bookmark so we can read this file later
-            // under App Sandbox without re-prompting.
+            // even if the file is moved.
             do {
                 try BookmarkStore.shared.save(url, name: BookmarkStore.sshKeyName(for: connection.id))
             } catch {

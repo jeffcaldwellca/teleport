@@ -163,7 +163,7 @@ public struct SSHAgent: Sendable {
         let header = try Self.receive(fd, count: 4)
         let length = header.reduce(0) { $0 << 8 | Int($1) }
         guard length > 0, length <= Self.maxReplySize else { throw Failure.malformedReply }
-        var reply = ByteBuffer(bytes: try Self.receive(fd, count: length))
+        let reply = ByteBuffer(bytes: try Self.receive(fd, count: length))
         if reply.getInteger(at: reply.readerIndex, as: UInt8.self) == Message.failure { throw Failure.refused }
         return reply
     }

@@ -72,6 +72,11 @@ struct GetCommand: AsyncParsableCommand {
             printer.update(bytes: bytes, total: total)
         }
         printer.finish()
+        // Keep the server's modification time, as the app and `sync` do, so
+        // "is it newer?" stays meaningful afterwards.
+        if let modified = await client.remoteModifiedDate(at: remotePath) {
+            try? FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: localURL.path)
+        }
         if !global.quiet { print(localURL.path) }
     }
 

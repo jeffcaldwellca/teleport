@@ -1,7 +1,7 @@
 import Foundation
 import TeleportKit
 
-/// Wires GUI-specific policy (sandbox-scoped key bookmarks, the host-key and
+/// Wires GUI-specific policy (bookmarked key files, the host-key and
 /// certificate confirmation sheet) into the clients' injectable dependencies. The CLI
 /// has its own equivalent factory with stateless, non-interactive defaults.
 enum RemoteClientFactory {
@@ -40,7 +40,7 @@ enum RemoteClientFactory {
                     } catch {
                         throw RemoteClientError.unknown(
                             "Could not read SSH key at \(url.path): \(error.localizedDescription). " +
-                            "Try selecting the key again from the connection editor so the app can store a sandbox-friendly bookmark."
+                            "Check that the file exists and is readable, or choose the key again in the connection editor."
                         )
                     }
                 },
