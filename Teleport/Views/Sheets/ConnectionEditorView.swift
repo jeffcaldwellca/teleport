@@ -104,7 +104,13 @@ struct ConnectionEditorView: View {
                             }
                         }
                         fieldRow("") {
-                            Text("Key path takes precedence over password for SFTP auth.")
+                            Toggle("Use ssh-agent", isOn: $connection.useSSHAgent)
+                                .toggleStyle(.checkbox)
+                                .help("Try the keys held by ssh-agent first (including ones unlocked with ssh-add), before the key file or password.")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        fieldRow("") {
+                            Text("A key file takes precedence over the password. Encrypted keys ask for their passphrase when connecting.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -182,6 +188,14 @@ struct ConnectionEditorView: View {
             set: { if $0 == nil { HostKeyConfirmation.shared.reject() } }
         )) { request in
             HostKeyConfirmationSheet(request: request)
+        }
+        // Likewise for the passphrase of an encrypted key.
+        .sheet(item: Binding(
+            get: { PassphrasePrompt.shared.pending },
+            // Dismissed without an answer: the connection gives up on the key.
+            set: { if $0 == nil { PassphrasePrompt.shared.cancel() } }
+        )) { request in
+            PassphraseSheet(request: request)
         }
     }
 

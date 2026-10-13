@@ -36,7 +36,10 @@
 		C0B0AB72C3FB4AD4A73C71E5 /* PersistentHSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 645091BFA5461EF2A50D5B73 /* PersistentHSplitView.swift */; };
 		C15102BF90C1D71CA39AFC70 /* LocalFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CEF06B490E9771755881FDE /* LocalFileServiceTests.swift */; };
 		C4CFC4E0D839F6B4FA5B9EC1 /* TransferQueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD4A1EA2F79A462094CD5EA8 /* TransferQueueView.swift */; };
+		C6803417FDE6FAE9B6948B6F /* PassphrasePrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9627705310C617AEB205E82 /* PassphrasePrompt.swift */; };
 		C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18E79DF52B793FCE0A588A95 /* MainToolbarContent.swift */; };
+		C83CC31C511C14AB33B35D4F /* PassphrasePromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EF24DB9F0F4FBC7CA27DF2E /* PassphrasePromptTests.swift */; };
+		CD8F254B188E45EB950646E2 /* PassphraseSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A40CBC26BFE44DA0F12C86 /* PassphraseSheet.swift */; };
 		D022FB42EEC3445211183DFE /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B0D1DC65FBBB55D9B54BA1 /* SidebarView.swift */; };
 		D30B93CF87BD5440EA11535C /* FileItemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF086A1C6447D89589EFB4A /* FileItemTests.swift */; };
 		D5B0BCB1D2634616C55DA1FF /* AppSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE5E450C5AA930308F5904D5 /* AppSupportTests.swift */; };
@@ -64,6 +67,7 @@
 
 /* Begin PBXFileReference section */
 		007E373DF98623270ED11DF7 /* TeleportKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TeleportKit; path = TeleportKit; sourceTree = SOURCE_ROOT; };
+		0EF24DB9F0F4FBC7CA27DF2E /* PassphrasePromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassphrasePromptTests.swift; sourceTree = "<group>"; };
 		18E79DF52B793FCE0A588A95 /* MainToolbarContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainToolbarContent.swift; sourceTree = "<group>"; };
 		1E96876EED7F3FDEB70CE6F8 /* LocalFileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileService.swift; sourceTree = "<group>"; };
 		22AC3AAFB688523CC34DCA6E /* PermissionsEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsEditorSheet.swift; sourceTree = "<group>"; };
@@ -74,6 +78,7 @@
 		35047B775F3B89236A00502B /* ConnectionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionEditorView.swift; sourceTree = "<group>"; };
 		3A8D05848D64FCD686BABC00 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3EEB2D57BE0A49B776D48D69 /* TransferTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferTask.swift; sourceTree = "<group>"; };
+		41A40CBC26BFE44DA0F12C86 /* PassphraseSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassphraseSheet.swift; sourceTree = "<group>"; };
 		44DEE33285E690A23AA3FDA0 /* SSHKeyAuthIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyAuthIntegrationTests.swift; sourceTree = "<group>"; };
 		4BE3AA3C32D448809B92E6DC /* TransferQueueRetryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueueRetryTests.swift; sourceTree = "<group>"; };
 		4C55D35B6F34845417E65A45 /* HostKeyConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyConfirmationSheet.swift; sourceTree = "<group>"; };
@@ -100,6 +105,7 @@
 		BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteEditManager.swift; sourceTree = "<group>"; };
 		C1263184A33142977C401CA1 /* SSHKeyFingerprintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKeyFingerprintTests.swift; sourceTree = "<group>"; };
 		C130DEB5DDFF9D7EC561F1FA /* PreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesTests.swift; sourceTree = "<group>"; };
+		C9627705310C617AEB205E82 /* PassphrasePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassphrasePrompt.swift; sourceTree = "<group>"; };
 		CA0542321805336558EF7D5D /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
 		D5790B538AD444BCE1388545 /* LocalFileDrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileDrop.swift; sourceTree = "<group>"; };
 		DE5E450C5AA930308F5904D5 /* AppSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSupportTests.swift; sourceTree = "<group>"; };
@@ -152,6 +158,7 @@
 				923E79BD9BD2DC248664900D /* HostKeyConfirmation.swift */,
 				B064B88C8149977A91AB511C /* KeychainService.swift */,
 				1E96876EED7F3FDEB70CE6F8 /* LocalFileService.swift */,
+				C9627705310C617AEB205E82 /* PassphrasePrompt.swift */,
 				4FD10788AB88DCC0A473C2D9 /* RemoteClientFactory.swift */,
 				BA7E25663BF034FEBE8BC317 /* RemoteEditManager.swift */,
 			);
@@ -182,6 +189,7 @@
 			children = (
 				35047B775F3B89236A00502B /* ConnectionEditorView.swift */,
 				4C55D35B6F34845417E65A45 /* HostKeyConfirmationSheet.swift */,
+				41A40CBC26BFE44DA0F12C86 /* PassphraseSheet.swift */,
 				22AC3AAFB688523CC34DCA6E /* PermissionsEditorSheet.swift */,
 			);
 			path = Sheets;
@@ -203,6 +211,7 @@
 				B3C79F9BB465576DF5829EFE /* CLIIntegrationTests.swift */,
 				9DF086A1C6447D89589EFB4A /* FileItemTests.swift */,
 				9CEF06B490E9771755881FDE /* LocalFileServiceTests.swift */,
+				0EF24DB9F0F4FBC7CA27DF2E /* PassphrasePromptTests.swift */,
 				C130DEB5DDFF9D7EC561F1FA /* PreferencesTests.swift */,
 				52010299A996107540DC1CB6 /* RemoteClientErrorTests.swift */,
 				29BED02A2BEF9C1D88E357CF /* RemotePathTests.swift */,
@@ -378,6 +387,7 @@
 				902E9599438C55DED1A62649 /* CLIIntegrationTests.swift in Sources */,
 				D30B93CF87BD5440EA11535C /* FileItemTests.swift in Sources */,
 				C15102BF90C1D71CA39AFC70 /* LocalFileServiceTests.swift in Sources */,
+				C83CC31C511C14AB33B35D4F /* PassphrasePromptTests.swift in Sources */,
 				89ADC2A9441653B33A5095B3 /* PreferencesTests.swift in Sources */,
 				8629C8E19BC3D2BFC47C258E /* RemoteClientErrorTests.swift in Sources */,
 				FF7A676BB7183BB16001B57A /* RemotePathTests.swift in Sources */,
@@ -410,6 +420,8 @@
 				4B8340FB6F56834BF7A5F0D3 /* LocalFileDrop.swift in Sources */,
 				09440E434B76FB9A5E4AFFB4 /* LocalFileService.swift in Sources */,
 				C7F58D5AE750289DDA8B6EAA /* MainToolbarContent.swift in Sources */,
+				C6803417FDE6FAE9B6948B6F /* PassphrasePrompt.swift in Sources */,
+				CD8F254B188E45EB950646E2 /* PassphraseSheet.swift in Sources */,
 				74D8B9CEF55EA10158B2458C /* PermissionsEditorSheet.swift in Sources */,
 				C0B0AB72C3FB4AD4A73C71E5 /* PersistentHSplitView.swift in Sources */,
 				7DACB011B15E4F27D8568BC1 /* Preferences.swift in Sources */,

@@ -27,6 +27,7 @@ final class ConnectionStore {
 
     func delete(_ connection: Connection) {
         KeychainService.delete(for: connection.id)
+        KeychainService.delete(account: KeychainService.passphraseAccount(for: connection.id))
         connections.removeAll { $0.id == connection.id }
         persist()
     }
