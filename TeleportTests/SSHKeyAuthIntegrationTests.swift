@@ -190,6 +190,25 @@ final class SSHKeyAuthIntegrationTests: XCTestCase {
         try await assertLogsIn(agentClient(SSHAgent(socketPath: "/tmp/tp-it-agent-gone.sock"), password: "testpass"))
     }
 
+    /// With a working agent key, an encrypted key file that is also
+    /// configured must not be unlocked — no passphrase prompt for a key that
+    /// is never needed.
+    func test_agentKeyAccepted_theKeyFilesPassphraseIsNeverAskedFor() async throws {
+        try requireServers()
+        var connection = connection(key: "ed25519_enc")
+        connection.useSSHAgent = true
+        let asked = Recorder()
+        let client = SFTPClient(
+            connection: connection, password: "",
+            hostKeyStore: SSHHostKeyStore(storeURL: nil),
+            onUnknownHostKey: { _, _, _ in true },
+            passphraseProvider: { _, retry in asked.append(retry); return nil },
+            agent: try startAgent(holding: ["ecdsa256"])
+        )
+        try await assertLogsIn(client)
+        XCTAssertTrue(asked.values.isEmpty)
+    }
+
     func test_agentOff_itsKeysAreNotOffered() async throws {
         try requireServers()
         let agent = try startAgent(holding: ["ed25519"])

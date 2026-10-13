@@ -190,7 +190,8 @@ final class CLIIntegrationTests: XCTestCase {
 
     private func lsUpload(_ extra: [String], environment: [String: String] = [:]) throws -> (exitCode: Int32, stdout: String, stderr: String) {
         try run(["ls", "sftp://testuser@127.0.0.1:2222/upload",
-                 "--known-hosts", knownHostsFile(), "--accept-new-hostkey"] + extra,
+                 "--known-hosts", knownHostsFile(), "--accept-new-hostkey",
+                 "--no-ssh-config"] + extra,   // never the developer's own ~/.ssh/config
                 environment: environment)
     }
 
@@ -239,5 +240,44 @@ final class CLIIntegrationTests: XCTestCase {
 
         let without = try lsUpload(["--no-agent"], environment: ["SSH_AUTH_SOCK": socket])
         XCTAssertEqual(without.exitCode, 3, without.stderr)   // authFailed: nothing to offer
+    }
+
+    /// A host alias from an ssh config works the way it does for `ssh`:
+    /// where to connect, who as, and which key all come from the file.
+    func test_sshConfigAlias_suppliesHostPortUserAndIdentity() throws {
+        try requireKeys()
+        let config = FileManager.default.temporaryDirectory
+            .appending(component: "tport-it-ssh-config-\(UUID().uuidString)")
+        try """
+        Host teleport-it
+            HostName 127.0.0.1
+            Port 2222
+            User testuser
+            IdentityFile \(Self.keys)/ed25519
+        """.write(to: config, atomically: true, encoding: .utf8)
+        addTeardownBlock { try? FileManager.default.removeItem(at: config) }
+
+        let viaAlias = try run(["ls", "sftp://teleport-it/upload", "--ssh-config", config.path,
+                                "--known-hosts", knownHostsFile(), "--accept-new-hostkey"])
+        XCTAssertEqual(viaAlias.exitCode, 0, viaAlias.stderr)
+
+        let ignoringConfig = try run(["ls", "sftp://teleport-it/upload", "--ssh-config", config.path, "--no-ssh-config",
+                                      "--known-hosts", knownHostsFile(), "--accept-new-hostkey"])
+        XCTAssertEqual(ignoringConfig.exitCode, 5, ignoringConfig.stderr)   // connectionFailed: no such host
+    }
+
+    /// A password given on the command line is used as given — a config
+    /// `IdentityFile` must not replace it (a configured key means the
+    /// password is never sent).
+    func test_sshConfigIdentity_doesNotOverrideAnExplicitPassword() throws {
+        try requireKeys()
+        let config = FileManager.default.temporaryDirectory
+            .appending(component: "tport-it-ssh-config-\(UUID().uuidString)")
+        try "Host *\n  IdentityFile \(Self.keys)/unauthorised\n".write(to: config, atomically: true, encoding: .utf8)
+        addTeardownBlock { try? FileManager.default.removeItem(at: config) }
+
+        let result = try run(["ls", "sftp://testuser:testpass@127.0.0.1:2222/upload", "--ssh-config", config.path,
+                              "--known-hosts", knownHostsFile(), "--accept-new-hostkey"])
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
     }
 }
