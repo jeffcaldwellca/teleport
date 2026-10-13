@@ -10,6 +10,8 @@ private final class GatedClient: RemoteClient, @unchecked Sendable {
     private let behaviour: Behaviour
     private var gate: CheckedContinuation<Bool, Never>?
     private var _disconnects = 0
+    private var _listings = 0
+    var listings: Int { lock.withLock { _listings } }
 
     init(_ behaviour: Behaviour) { self.behaviour = behaviour }
 
@@ -25,7 +27,11 @@ private final class GatedClient: RemoteClient, @unchecked Sendable {
         waiting?.resume(returning: succeeding)
     }
 
+    private var _connects = 0
+    var connects: Int { lock.withLock { _connects } }
+
     func connect() async throws {
+        lock.withLock { _connects += 1 }
         let ok: Bool
         switch behaviour {
         case .succeed: ok = true
@@ -35,7 +41,10 @@ private final class GatedClient: RemoteClient, @unchecked Sendable {
         if !ok { throw RemoteClientError.connectionFailed("scripted") }
     }
     func disconnect() async { lock.withLock { _disconnects += 1 } }
-    func listDirectory(at absolutePath: String) async throws -> [FileItem] { [] }
+    func listDirectory(at absolutePath: String) async throws -> [FileItem] {
+        lock.withLock { _listings += 1 }
+        return []
+    }
     func download(remotePath: String, to localURL: URL, resume: Bool,
                   progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {}
     func upload(from localURL: URL, remotePath: String, resume: Bool,
@@ -131,11 +140,14 @@ final class AppStateSessionTests: XCTestCase {
 
     func test_failedConnection_removesItsTab_andLeavesThePreviousSessionActive() async {
         await state.openSession(for: alpha)
+        await state.openSession(for: beta)
+        await state.openSession(for: gamma)
+        state.activate(state.sessions[0].id)        // Alpha: neither the last tab nor the newest
         script = [.fail]
 
-        await state.openSession(for: beta)
+        await state.openSession(for: Connection(name: "Delta", host: "delta.example.com"))
 
-        XCTAssertEqual(titles, ["Alpha"])
+        XCTAssertEqual(titles, ["Alpha", "Beta", "Gamma"])
         XCTAssertEqual(activeTitle, "Alpha")
         XCTAssertTrue(state.showingAlert)
         XCTAssertEqual(state.alertTitle, "Connection Failed")
@@ -186,20 +198,41 @@ final class AppStateSessionTests: XCTestCase {
         XCTAssertFalse(state.showingAlert)
     }
 
+    /// …including when it ends up succeeding: that connection must be shut
+    /// again rather than left logged in with no tab.
+    func test_closingASessionThatThenFinishesConnecting_disconnectsIt() async throws {
+        await state.openSession(for: alpha)
+        script = [.hold]
+        let opening = Task { await state.openSession(for: beta) }
+        try await waitUntil("beta connecting") { self.clients.count == 2 && self.clients[1].isWaiting }
+
+        await state.closeSession(state.sessions[1].id)
+        let disconnectsAtClose = clients[1].disconnects
+        clients[1].release(succeeding: true)
+        await opening.value
+
+        XCTAssertEqual(titles, ["Alpha"])
+        XCTAssertGreaterThan(clients[1].disconnects, disconnectsAtClose,
+                             "The connection that completed after the close must be closed again")
+    }
+
     // MARK: - Closing
 
     func test_closingTheActiveSession_activatesTheRightHandNeighbour_elseTheLeft() async {
+        let delta = Connection(name: "Delta", host: "delta.example.com")
         await state.openSession(for: alpha)
         await state.openSession(for: beta)
         await state.openSession(for: gamma)
+        await state.openSession(for: delta)
 
-        state.activate(state.sessions[1].id)                 // Beta, in the middle
+        state.activate(state.sessions[1].id)                 // Beta
         await state.closeSession(state.sessions[1].id)
         XCTAssertEqual(activeTitle, "Gamma", "Right-hand neighbour takes over")
         XCTAssertEqual(state.focusedPane, .remote)
 
-        await state.closeSession(state.sessions[1].id)       // Gamma, now last
-        XCTAssertEqual(activeTitle, "Alpha", "No right-hand neighbour: the left one")
+        state.activate(state.sessions[2].id)                 // Delta, the last tab
+        await state.closeSession(state.sessions[2].id)
+        XCTAssertEqual(activeTitle, "Gamma", "No right-hand neighbour: the one on its left, not the first")
     }
 
     func test_closingABackgroundSession_leavesTheActiveOneAlone() async {
@@ -259,5 +292,63 @@ final class AppStateSessionTests: XCTestCase {
         try await waitUntil("alpha's sessions closed") { self.titles == ["Beta"] }
         XCTAssertEqual(activeTitle, "Beta")
         XCTAssertEqual(clients[0].disconnects + clients[1].disconnects, 2)
+    }
+
+    // MARK: - Review fixes
+
+    /// With "Alpha (2)" on screen, choosing Alpha again means "I'm already
+    /// here", not "throw me back to the first Alpha tab".
+    func test_openingTheFavouriteOfTheActiveSession_staysOnThatSession() async {
+        await state.openSession(for: alpha)
+        await state.openNewSession(for: alpha)
+        XCTAssertEqual(activeTitle, "Alpha (2)")
+
+        await state.openSession(for: alpha)
+
+        XCTAssertEqual(activeTitle, "Alpha (2)")
+    }
+
+    /// The sidebar highlight follows what the user picks. It must not jump to
+    /// another favourite just because a tab was closed or failed to open.
+    func test_closingASession_leavesTheSidebarSelectionWhereItWas() async {
+        await state.openSession(for: alpha)
+        await state.openSession(for: beta)
+        XCTAssertEqual(state.selectedConnectionID, beta.id)
+
+        await state.disconnect()                 // closes Beta, Alpha takes over
+
+        XCTAssertEqual(activeTitle, "Alpha")
+        XCTAssertEqual(state.selectedConnectionID, beta.id)
+    }
+
+    /// Uploads finishing for a server whose tab is in the background must
+    /// refresh *that* session — not whichever one happens to be on screen.
+    func test_uploadCompleted_refreshesTheSessionItBelongsTo_notTheVisibleOne() async throws {
+        await state.openSession(for: alpha)
+        await state.openSession(for: beta)          // Beta on screen
+        let alphaListings = clients[0].listings, betaListings = clients[1].listings
+
+        NotificationCenter.default.post(
+            name: .transferCompleted, object: nil,
+            userInfo: ["direction": "upload", "connectionID": alpha.id]
+        )
+
+        try await waitUntil("alpha refreshed") { self.clients[0].listings > alphaListings }
+        XCTAssertEqual(clients[1].listings, betaListings)
+    }
+
+    /// A listing that fails because its session was closed must not log back
+    /// in: that connection would belong to no tab and nobody would close it.
+    func test_closedSession_doesNotReconnectToRetryAListing() async {
+        script = [.succeed]
+        await state.openSession(for: alpha)
+        let session = state.sessions[0]
+        let connectsBefore = clients[0].connects
+
+        await state.disconnect()
+        await session.browser.refresh()
+
+        XCTAssertEqual(clients[0].connects, connectsBefore)
+        XCTAssertEqual(clients[0].listings, 1, "No listing is attempted on a closed session either")
     }
 }

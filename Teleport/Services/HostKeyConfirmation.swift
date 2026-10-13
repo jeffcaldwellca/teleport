@@ -28,16 +28,19 @@ final class HostKeyConfirmation {
     private(set) var pending: HostKeyConfirmationRequest? = nil
 
     private var continuation: CheckedContinuation<Bool, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    private init() {}
+    init() {}
 
     /// Show the prompt and wait for the user's decision.
     func confirm(host: String, port: Int, fingerprint: String,
                  certificateReason: String? = nil) async -> Bool {
-        // If another prompt is already in flight, reject the new one rather
-        // than overwriting state — should never happen in practice, but keep
-        // the contract simple.
-        guard pending == nil else { return false }
+        // One sheet at a time. With several sessions connecting at once two
+        // never-seen servers can ask together; the second waits its turn
+        // rather than being refused unseen.
+        while pending != nil {
+            await withCheckedContinuation { waiters.append($0) }
+        }
 
         return await withCheckedContinuation { cont in
             self.continuation = cont
@@ -49,18 +52,18 @@ final class HostKeyConfirmation {
     }
 
     /// Called from the sheet when the user trusts the key.
-    func accept() {
-        let cont = continuation
-        continuation = nil
-        pending = nil
-        cont?.resume(returning: true)
-    }
+    func accept() { finish(trusted: true) }
 
     /// Called from the sheet when the user rejects.
-    func reject() {
+    func reject() { finish(trusted: false) }
+
+    private func finish(trusted: Bool) {
         let cont = continuation
         continuation = nil
         pending = nil
-        cont?.resume(returning: false)
+        cont?.resume(returning: trusted)
+        let waiting = waiters
+        waiters.removeAll()
+        waiting.forEach { $0.resume() }
     }
 }

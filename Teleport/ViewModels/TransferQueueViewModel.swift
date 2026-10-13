@@ -514,7 +514,8 @@ final class TransferQueueViewModel {
             NotificationCenter.default.post(
                 name: .transferCompleted,
                 object: nil,
-                userInfo: ["direction": task.direction == .download ? "download" : "upload"]
+                userInfo: ["direction": task.direction == .download ? "download" : "upload",
+                           "connectionID": task.connection.id]
             )
             return .finished
         } catch {
@@ -933,7 +934,8 @@ final class TransferQueueViewModel {
         NotificationCenter.default.post(
             name: .transferCompleted,
             object: nil,
-            userInfo: ["direction": direction == .download ? "download" : "upload"]
+            userInfo: ["direction": direction == .download ? "download" : "upload",
+                       "connectionID": connection.id]
         )
     }
 
@@ -967,7 +969,6 @@ final class TransferQueueViewModel {
     /// and surprising escapes from the dragged tree.
     func enqueueFolderUpload(
         connection: Connection,
-        client: RemoteClient,
         folderURL: URL,
         remoteParent: String
     ) async throws {
@@ -987,12 +988,33 @@ final class TransferQueueViewModel {
         // Parents sort before children ("a" < "a/b"), so creation order is safe.
         // Failures are tolerated here (the directory may already exist); a
         // genuinely missing parent surfaces as a visible failed upload below.
-        try? await client.createDirectory(at: root)
-        for dir in relativeDirs.sorted() {
-            try? await client.createDirectory(at: "\(root)/\(dir)")
+        try await withPreparationClient(for: connection) { client in
+            try? await client.createDirectory(at: root)
+            for dir in relativeDirs.sorted() {
+                try? await client.createDirectory(at: "\(root)/\(dir)")
+            }
         }
         enqueueBatch(connection: connection, direction: .upload,
                      items: files.map { ($0.local, "\(root)/\($0.relative)") })
+    }
+
+    /// Folder transfers need a connection before any file is queued (to make
+    /// the remote folders, or to walk the remote tree). They open one of
+    /// their own rather than borrow the browsing session's: the transfer has
+    /// to survive that session's tab being closed halfway through.
+    private func withPreparationClient(
+        for connection: Connection,
+        _ body: (RemoteClient) async throws -> Void
+    ) async throws {
+        let client = clientFactory(connection, passwordProvider(connection))
+        do {
+            try await client.connect()
+            try await body(client)
+        } catch {
+            await client.disconnect()
+            throw error
+        }
+        await client.disconnect()
     }
 
     /// Synchronous local tree walk (directory enumeration isn't async-safe).
@@ -1041,7 +1063,6 @@ final class TransferQueueViewModel {
     /// directories as it goes, and enqueues one task per file.
     func enqueueFolderDownload(
         connection: Connection,
-        client: RemoteClient,
         remotePath: String,
         folderName: String,
         into localParent: URL
@@ -1054,24 +1075,26 @@ final class TransferQueueViewModel {
         var pendingDirs: [(remote: String, local: URL)] = [(remotePath, localParent.appending(component: safeName))]
         var files: [(remote: String, local: URL)] = []
 
-        while let (remoteDir, localDir) = pendingDirs.popLast() {
-            try fm.createDirectory(at: localDir, withIntermediateDirectories: true)
-            for item in try await client.listDirectory(at: remoteDir) {
-                // Names are already sanitized by the listing layer, but a local
-                // containment check keeps a hostile server from escaping the
-                // chosen destination (defence in depth).
-                guard let name = RemotePath.sanitizedFilename(item.name) else { continue }
-                let childLocal = localDir.appending(component: name)
-                guard RemotePath.isContained(childLocal, in: localDir) else { continue }
-                if item.isSymlink { continue }
+        try await withPreparationClient(for: connection) { client in
+            while let (remoteDir, localDir) = pendingDirs.popLast() {
+                try fm.createDirectory(at: localDir, withIntermediateDirectories: true)
+                for item in try await client.listDirectory(at: remoteDir) {
+                    // Names are already sanitized by the listing layer, but a local
+                    // containment check keeps a hostile server from escaping the
+                    // chosen destination (defence in depth).
+                    guard let name = RemotePath.sanitizedFilename(item.name) else { continue }
+                    let childLocal = localDir.appending(component: name)
+                    guard RemotePath.isContained(childLocal, in: localDir) else { continue }
+                    if item.isSymlink { continue }
 
-                if item.isDirectory {
-                    pendingDirs.append((item.path, childLocal))
-                } else {
-                    files.append((item.path, childLocal))
-                }
-                if files.count + pendingDirs.count > Self.folderTransferLimit {
-                    throw FolderTransferError.tooLarge
+                    if item.isDirectory {
+                        pendingDirs.append((item.path, childLocal))
+                    } else {
+                        files.append((item.path, childLocal))
+                    }
+                    if files.count + pendingDirs.count > Self.folderTransferLimit {
+                        throw FolderTransferError.tooLarge
+                    }
                 }
             }
         }
