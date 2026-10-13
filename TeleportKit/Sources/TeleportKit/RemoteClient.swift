@@ -72,6 +72,9 @@ public enum RemoteClientError: LocalizedError {
     case notConnected
     case connectionFailed(String)
     case authenticationFailed
+    /// Authentication can't succeed for a reason worth spelling out (a key
+    /// that stayed locked, a key type the server won't accept from us).
+    case authenticationRejected(String)
     case permissionDenied
     case fileNotFound(String)
     case transferFailed(String)
@@ -85,6 +88,7 @@ public enum RemoteClientError: LocalizedError {
         case .notConnected:           return "Not connected"
         case .connectionFailed(let m): return "Connection failed: \(m)"
         case .authenticationFailed:   return "Authentication failed"
+        case .authenticationRejected(let why): return why
         case .permissionDenied:       return "Permission denied"
         case .fileNotFound(let p):    return "File not found: \(p)"
         case .transferFailed(let m):  return "Transfer failed: \(m)"

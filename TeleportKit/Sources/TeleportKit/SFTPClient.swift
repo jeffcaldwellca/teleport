@@ -18,6 +18,7 @@ public actor SFTPClient: RemoteClient {
     private let hostKeyStore: SSHHostKeyStore
     private let keyReader: @Sendable (URL) async throws -> Data
     private let onUnknownHostKey: @Sendable (String, Int, String) async -> Bool
+    private let passphraseProvider: @Sendable (String, Bool) async -> String?
 
     private var ssh: SSHClient?
     private var sftp: Citadel.SFTPClient?
@@ -35,13 +36,18 @@ public actor SFTPClient: RemoteClient {
     ///     (host, port, fingerprint) → trust? Called before any credentials are
     ///     sent to the host. Defaults to `false` (fail closed).
     ///     The GUI app supplies a closure that shows a confirmation dialog.
+    ///   - passphraseProvider: asked for the passphrase of an encrypted key
+    ///     file (key path, is-this-a-retry-after-a-wrong-one) → passphrase, or
+    ///     nil to give up. Defaults to nil: encrypted keys fail closed.
     public init(
         connection: Connection,
         password: String,
         hostKeyStore: SSHHostKeyStore = .shared,
         keyReader: @escaping @Sendable (URL) async throws -> Data = { url in try Data(contentsOf: url) },
-        onUnknownHostKey: @escaping @Sendable (String, Int, String) async -> Bool = { _, _, _ in false }
+        onUnknownHostKey: @escaping @Sendable (String, Int, String) async -> Bool = { _, _, _ in false },
+        passphraseProvider: @escaping @Sendable (String, Bool) async -> String? = { _, _ in nil }
     ) {
+        self.passphraseProvider = passphraseProvider
         self.connection = connection
         self.password   = password
         self.hostKeyStore = hostKeyStore
@@ -65,7 +71,10 @@ public actor SFTPClient: RemoteClient {
         // and its NIO resources.
         if ssh != nil || sftp != nil { await disconnect() }
 
-        let authMethod: SSHAuthenticationMethod = try await buildAuthMethod()
+        let offers = try await buildOffers()
+        let authMethod = SSHAuthenticationMethod.custom(
+            SSHAuthSequence(username: connection.username, offers: offers)
+        )
 
         // Host-key validation:
         //   1. Look up any previously-trusted fingerprint for this host:port.
@@ -177,52 +186,53 @@ public actor SFTPClient: RemoteClient {
         }
     }
 
-    private func buildAuthMethod() async throws -> SSHAuthenticationMethod {
-        let user = connection.username
-
-        // If the user configured a key path, we *only* attempt key auth.
+    /// The credentials to offer, in order.
+    private func buildOffers() async throws -> [NIOSSHUserAuthenticationOffer.Offer] {
+        // If the user configured a key path, the password is never offered.
         // Silently falling back to password auth is dangerous — it leaks
         // whatever string is in the password field over the wire when the
         // user thought they were using a key.
         guard connection.sshKeyPath.isEmpty else {
-            return try await buildKeyAuth(user: user)
+            return [try await keyFileOffer()]
         }
-
-        return .passwordBased(username: user, password: password)
+        return [.password(.init(password: password))]
     }
 
-    private func buildKeyAuth(user: String) async throws -> SSHAuthenticationMethod {
+    /// How many times a passphrase is asked for before giving up.
+    private static let passphraseAttempts = 3
+
+    private func keyFileOffer() async throws -> NIOSSHUserAuthenticationOffer.Offer {
         let keyURL = URL(fileURLWithPath: (connection.sshKeyPath as NSString).expandingTildeInPath)
         let keyData = try await keyReader(keyURL)
 
-        guard let keyString = String(data: keyData, encoding: .utf8) else {
-            throw RemoteClientError.unsupported(
+        guard let keyText = String(data: keyData, encoding: .utf8) else {
+            throw RemoteClientError.authenticationRejected(
                 "SSH key at \(keyURL.path) isn't a readable text key file (OpenSSH/PEM)."
             )
         }
 
-        // Citadel parses the standard OpenSSH private-key container. Try ed25519
-        // first, then RSA — the on-disk format is the same `-----BEGIN OPENSSH
-        // PRIVATE KEY-----` wrapper for both, so we detect by attempting each.
-        if let key = try? Curve25519.Signing.PrivateKey(sshEd25519: keyString) {
-            return .ed25519(username: user, privateKey: key)
+        var passphrase: String?
+        var asked = 0
+        while true {
+            do {
+                let key = try SSHPrivateKeyFile.privateKey(from: keyText, passphrase: passphrase)
+                return .privateKey(.init(privateKey: key))
+            } catch let failure as SSHPrivateKeyFile.Failure {
+                switch failure {
+                case .passphraseRequired, .wrongPassphrase:
+                    guard asked < Self.passphraseAttempts,
+                          let entered = await passphraseProvider(keyURL.path, failure == .wrongPassphrase) else {
+                        throw RemoteClientError.authenticationRejected(
+                            "The SSH key \(keyURL.lastPathComponent) is protected by a passphrase, and it wasn\u{2019}t unlocked."
+                        )
+                    }
+                    asked += 1
+                    passphrase = entered
+                case .unsupported(let why):
+                    throw RemoteClientError.authenticationRejected(why)
+                }
+            }
         }
-        if let key = try? Insecure.RSA.PrivateKey(sshRsa: keyString) {
-            return .rsa(username: user, privateKey: key)
-        }
-
-        // Passphrase-protected keys parse only with a decryption key, which we
-        // don't prompt for yet — surface a clear, actionable message.
-        if keyString.contains("ENCRYPTED") || keyString.contains("aes256-ctr") {
-            throw RemoteClientError.unsupported(
-                "Passphrase-protected SSH keys aren't supported yet. Remove the passphrase " +
-                "(`ssh-keygen -p -f \(keyURL.lastPathComponent)`) or use password authentication."
-            )
-        }
-        throw RemoteClientError.unsupported(
-            "Unsupported SSH key at \(keyURL.path). Supported formats: unencrypted OpenSSH " +
-            "ed25519 or RSA private keys."
-        )
     }
 
     // MARK: - Disconnect

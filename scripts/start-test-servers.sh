@@ -4,7 +4,7 @@
 # replacing any previous ones. All accounts are testuser / testpass.
 #
 #   FTP              127.0.0.1:2121   writable dir /ftp/testuser
-#   SFTP             127.0.0.1:2222   writable dir /upload
+#   SFTP             127.0.0.1:2222   writable dir /upload; test keys in /tmp/teleport-it-keys
 #   FTPS (explicit)  127.0.0.1:2122   self-signed cert, TLS session reuse required
 #   FTPS (implicit)  127.0.0.1:990    same cert
 #
@@ -23,7 +23,25 @@ docker run -d --name teleport-it-ftp -p 2121:21 -p 30000-30009:30000-30009 \
   -e USERS="testuser|testpass" -e ADDRESS=127.0.0.1 \
   -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server >/dev/null
 
-docker run -d --name teleport-it-sftp -p 2222:22 \
+# Key pairs for the SSH key tests, regenerated each time. The fixed path is
+# where SSHKeyAuthIntegrationTests looks for them; they only open this
+# throwaway container.
+KEYS=/tmp/teleport-it-keys
+rm -rf "$KEYS" && mkdir -p "$KEYS" && chmod 700 "$KEYS"
+keygen() { ssh-keygen -q -C teleport-it -f "$KEYS/$1" -N "$2" "${@:3}"; }
+keygen ed25519     ""                -t ed25519
+keygen ed25519_enc "test-passphrase" -t ed25519
+keygen ecdsa256    ""                -t ecdsa -b 256
+keygen ecdsa384    ""                -t ecdsa -b 384
+keygen ecdsa521    ""                -t ecdsa -b 521
+keygen rsa         ""                -t rsa -b 3072
+keygen unauthorised ""               -t ed25519     # deliberately not installed on the server
+KEY_MOUNTS=()
+for name in ed25519 ed25519_enc ecdsa256 ecdsa384 ecdsa521 rsa; do
+  KEY_MOUNTS+=(-v "$KEYS/$name.pub:/home/testuser/.ssh/keys/$name.pub:ro")
+done
+
+docker run -d --name teleport-it-sftp -p 2222:22 "${KEY_MOUNTS[@]}" \
   atmoz/sftp testuser:testpass:::upload >/dev/null
 
 docker run -d --name teleport-it-ftps -p 2122:21 -p 30010-30019:30010-30019 \

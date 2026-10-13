@@ -14,7 +14,7 @@ public enum TportExitCode: Int32 {
         if error is TportUsageError { return .usage }
         if let e = error as? RemoteClientError {
             switch e {
-            case .authenticationFailed, .permissionDenied:
+            case .authenticationFailed, .authenticationRejected, .permissionDenied:
                 return .authFailed
             case .fileNotFound:
                 return .notFound

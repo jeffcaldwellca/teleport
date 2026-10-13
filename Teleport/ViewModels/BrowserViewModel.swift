@@ -129,7 +129,8 @@ final class BrowserViewModel {
     private static func isLikelyConnectionDrop(_ error: Error) -> Bool {
         if let e = error as? RemoteClientError {
             switch e {
-            case .permissionDenied, .fileNotFound, .unsupported, .authenticationFailed: return false
+            case .permissionDenied, .fileNotFound, .unsupported,
+                 .authenticationFailed, .authenticationRejected: return false
             default: return true
             }
         }
