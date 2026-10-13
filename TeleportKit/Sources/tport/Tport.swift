@@ -1,10 +1,12 @@
 import ArgumentParser
+import TeleportCLICore
 
 @main
 struct Tport: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tport",
         abstract: "Scriptable FTP/FTPS/SFTP client — the Teleport CLI.",
+        version: TportVersion.current,
         subcommands: [
             LsCommand.self,
             StatCommand.self,
@@ -17,6 +19,7 @@ struct Tport: AsyncParsableCommand {
             ChmodCommand.self,
             ChownCommand.self,
             TestCommand.self,
+            TrustCommand.self,
         ]
     )
 }

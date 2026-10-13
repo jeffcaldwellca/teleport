@@ -479,4 +479,101 @@ final class CLIIntegrationTests: XCTestCase {
             XCTAssertEqual(lines(result.stdout, starting: "upload "), ["upload index.html"], "ftp: \(ftp) — \(result.stdout)")
         }
     }
+
+    // MARK: - Version and trust management (no servers needed)
+
+    func test_version_isTheAppsVersion() throws {
+        let projectFile = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().appending(path: "project.yml")
+        let project = try String(contentsOf: projectFile, encoding: .utf8)
+        let line = try XCTUnwrap(project.split(separator: "\n").first { $0.contains("MARKETING_VERSION:") })
+        let expected = line.split(separator: ":")[1].trimmingCharacters(in: CharacterSet(charactersIn: " \""))
+
+        let result = try run(["--version"])
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertEqual(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines), expected)
+    }
+
+    private func trustFile(_ entries: [String]) throws -> String {
+        let url = FileManager.default.temporaryDirectory.appending(component: "tport-it-trust-\(UUID().uuidString).json")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let body = entries.map { "\"\($0)\": {\"fingerprint\": \"SHA256:\(String(repeating: "ab", count: 32))\", \"firstSeen\": \"2026-10-12T00:00:00Z\"}" }
+        try "{\"schemaVersion\": 1, \"entries\": {\(body.joined(separator: ", "))}}".write(to: url, atomically: true, encoding: .utf8)
+        return url.path
+    }
+
+    /// The errors tell people to "remove the stored host key"; there has to
+    /// be a way to do that other than editing a JSON file.
+    func test_trust_listsAndForgetsHostKeysAndCertificates() throws {
+        let hosts = try trustFile(["web.example.com:22", "web.example.com:2222", "db.example.com:22"])
+        let certs = try trustFile(["ftp.example.com:21"])
+        let stores = ["--known-hosts", hosts, "--trusted-certs", certs]
+
+        let listed = try run(["trust", "list"] + stores)
+        XCTAssertEqual(listed.exitCode, 0, listed.stderr)
+        for expected in ["web.example.com:22", "web.example.com:2222", "db.example.com:22", "ftp.example.com:21"] {
+            XCTAssertTrue(listed.stdout.contains(expected), "\(expected) missing from: \(listed.stdout)")
+        }
+
+        // host:port forgets exactly that one…
+        XCTAssertEqual(try run(["trust", "forget", "web.example.com:2222"] + stores).exitCode, 0)
+        var remaining = try run(["trust", "list"] + stores).stdout
+        XCTAssertFalse(remaining.contains("web.example.com:2222"))
+        XCTAssertTrue(remaining.contains("web.example.com:22"))
+
+        // …a bare host forgets every entry for it, in both stores.
+        XCTAssertEqual(try run(["trust", "forget", "ftp.example.com"] + stores).exitCode, 0)
+        XCTAssertEqual(try run(["trust", "forget", "web.example.com"] + stores).exitCode, 0)
+        remaining = try run(["trust", "list"] + stores).stdout
+        XCTAssertFalse(remaining.contains("web.example.com"))
+        XCTAssertFalse(remaining.contains("ftp.example.com"))
+        XCTAssertTrue(remaining.contains("db.example.com:22"))
+
+        let unknown = try run(["trust", "forget", "nowhere.example.com"] + stores)
+        XCTAssertNotEqual(unknown.exitCode, 0)
+        XCTAssertTrue(unknown.stderr.contains("nowhere.example.com"), unknown.stderr)
+    }
+
+    // MARK: - Modification times and JSON
+
+    /// `put` and `get` keep the file's modification time, as the app and
+    /// `sync` do — otherwise every later "is it newer?" comparison is wrong.
+    func test_putAndGet_preserveModificationTimes() throws {
+        try requireServers()
+        let dir = FileManager.default.temporaryDirectory.appending(component: "tport-it-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let original = dir.appending(component: "dated.txt")
+        try "contents".write(to: original, atomically: true, encoding: .utf8)
+        let lastYear = Date(timeIntervalSince1970: 1_750_000_000)
+        try FileManager.default.setAttributes([.modificationDate: lastYear], ofItemAtPath: original.path)
+
+        let remote = "sftp://testuser:testpass@127.0.0.1:2222/upload/dated-\(UUID().uuidString).txt"
+        let options = ["--known-hosts", knownHostsFile(), "--accept-new-hostkey", "--no-ssh-config"]
+        XCTAssertEqual(try run(["put", original.path, remote] + options).exitCode, 0)
+
+        let copy = dir.appending(component: "copy.txt")
+        let get = try run(["get", remote, copy.path] + options)
+        XCTAssertEqual(get.exitCode, 0, get.stderr)
+
+        let modified = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: copy.path)[.modificationDate] as? Date)
+        XCTAssertEqual(modified.timeIntervalSince1970, lastYear.timeIntervalSince1970, accuracy: 2)
+    }
+
+    func test_sync_json_reportsThePlanInAMachineReadableForm() throws {
+        try requireServers()
+        let fixture = try syncFixture()
+
+        let result = try sync(fixture, ["--dry-run", "--json"])
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        let report = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        XCTAssertEqual(report["direction"] as? String, "up")
+        XCTAssertEqual(report["dryRun"] as? Bool, true)
+        let actions = try XCTUnwrap(report["actions"] as? [[String: Any]])
+        let uploads = actions.filter { $0["action"] as? String == "upload" }
+        XCTAssertEqual(Set(uploads.compactMap { $0["path"] as? String }), ["index.html", "css/site.css", "js/app.js"])
+        XCTAssertTrue(uploads.allSatisfy { $0["status"] as? String == "planned" })
+    }
 }

@@ -61,12 +61,4 @@ final class LocalFileService {
     func copy(from: URL, to: URL) throws {
         try fm.copyItem(at: from, to: to)
     }
-
-    func exists(at url: URL) -> Bool {
-        fm.fileExists(atPath: url.path)
-    }
-
-    func homeDirectory() -> URL {
-        fm.homeDirectoryForCurrentUser
-    }
 }

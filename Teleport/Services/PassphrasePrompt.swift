@@ -131,6 +131,12 @@ final class PassphrasePrompt {
         finish(with: nil)
     }
 
+    /// Whether a passphrase is on hand for this connection — saved in the
+    /// Keychain, or entered earlier this session.
+    func hasRememberedPassphrase(for connectionID: UUID) -> Bool {
+        session[connectionID] != nil || store.loadPassphrase(for: connectionID) != nil
+    }
+
     /// Drop everything remembered for a connection (it was deleted, or never saved).
     func forget(_ connectionID: UUID) {
         session[connectionID] = nil

@@ -1,9 +1,10 @@
 import Foundation
 import Observation
 
-/// Persists security-scoped bookmark data so the app can re-open user-chosen
-/// files (SSH keys, local pane root, upload sources) across launches under
-/// the App Sandbox.
+/// Persists bookmark data for user-chosen files (SSH keys, the local pane's
+/// root), so they are still found after being moved or renamed. Dates from
+/// when the app was sandboxed and needed bookmarks to reopen files at all;
+/// the security scope is harmless without the sandbox.
 ///
 /// Stored as a JSON map of `name → bookmarkData (base64)` under
 /// `Application Support/Teleport/bookmarks.json`.

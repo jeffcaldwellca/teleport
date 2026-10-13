@@ -1,4 +1,5 @@
 import XCTest
+import TeleportKit
 @testable import TeleportCLICore
 
 final class ConflictPolicyTests: XCTestCase {
@@ -75,5 +76,11 @@ final class ConflictPolicyTests: XCTestCase {
             decideConflict(policy: .ifNewer, exists: true, localDate: local, remoteDate: remote, direction: .put),
             .proceed
         )
+    }
+
+    /// `get`/`put --recursive`, `sync` and the app's folder transfers should
+    /// all give up at the same size.
+    func test_recursiveTransferLimit_matchesSync() {
+        XCTAssertEqual(FolderWalk.defaultLimit, FolderSync.defaultLimit)
     }
 }

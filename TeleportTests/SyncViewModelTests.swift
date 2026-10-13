@@ -147,6 +147,22 @@ final class SyncViewModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .idle)
     }
 
+    func test_excludes_typedAsFreeText_areApplied_andInvalidateAnOlderPlan() async throws {
+        try write("app.js")
+        try write("node_modules/big/index.js")
+        try write("debug.log")
+        let model = makeModel(remote: ["/var/www": []])
+        await model.compare()
+        XCTAssertEqual(model.plan?.transfers.count, 3)
+
+        model.excludeText = "node_modules,  *.log\n"
+
+        XCTAssertNil(model.plan)
+        await model.compare()
+        XCTAssertEqual(model.plan?.transfers.map(\.relativePath), ["app.js"])
+        XCTAssertEqual(SyncViewModel.patterns(from: " a, b\n\nc ,, "), ["a", "b", "c"])
+    }
+
     // MARK: - Apply
 
     func test_apply_upload_createsFolders_andQueuesTransfersThatOverwriteWithoutAsking() async throws {

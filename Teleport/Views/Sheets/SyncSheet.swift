@@ -35,6 +35,18 @@ struct SyncSheet: View {
             .font(.callout)
             .disabled(isBusy)
 
+            HStack(spacing: 8) {
+                Text("Skip")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextField("node_modules, *.log, build/cache", text: $model.excludeText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout)
+                    .onSubmit { Task { await model.compare() } }
+                    .help("Names or patterns to leave out on both sides, separated by commas. Skipped items are never deleted either.")
+            }
+            .disabled(isBusy)
+
             results
                 .frame(minHeight: 200, maxHeight: 320)
 

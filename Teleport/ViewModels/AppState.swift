@@ -90,6 +90,10 @@ final class AppState {
     /// The Sync Folders sheet, when it is open.
     var syncModel: SyncViewModel?
 
+    private static func syncExcludesKey(for connection: Connection) -> String {
+        "sync.excludes.\(connection.id.uuidString)"
+    }
+
     /// Open Sync Folders for the folders the two panes are showing.
     func beginSync() {
         guard let session = activeSession else { return }
@@ -97,11 +101,16 @@ final class AppState {
             connection: session.connection,
             localRoot: URL(fileURLWithPath: localPanePath),
             remoteRoot: session.browser.currentPath,
-            queue: transferQueue
+            queue: transferQueue,
+            // What to skip tends to be the same every time for a given site.
+            excludeText: UserDefaults.standard.string(forKey: Self.syncExcludesKey(for: session.connection)) ?? ""
         )
         // Folders created and files deleted don't pass through the queue, so
         // nothing else would tell the panes to look again.
-        model.onApplied = { [weak session] in
+        model.onApplied = { [weak session, weak model] in
+            if let session, let model {
+                UserDefaults.standard.set(model.excludeText, forKey: Self.syncExcludesKey(for: session.connection))
+            }
             session?.scheduleRefresh()
             NotificationCenter.default.post(name: .localFilesChanged, object: nil)
         }

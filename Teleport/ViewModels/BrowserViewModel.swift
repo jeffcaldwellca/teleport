@@ -271,8 +271,6 @@ final class BrowserViewModel {
         allItems.filter { selectedItems.contains($0.id) }
     }
 
-    func selectAll() { selectedItems = Set(displayedItems.map(\.id)) }
-    func clearSelection() { selectedItems.removeAll() }
 
     /// True when `path` can be listed — used to decide whether a remote
     /// symlink points at a directory (listings report links with lstat

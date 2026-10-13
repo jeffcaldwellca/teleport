@@ -198,4 +198,14 @@ final class PassphrasePromptTests: XCTestCase {
         prompt.cancel()
         _ = await again.value
     }
+
+    func test_hasRememberedPassphrase_reflectsTheKeychainAndThisSession() async throws {
+        XCTAssertFalse(prompt.hasRememberedPassphrase(for: connection))
+
+        store.saved[connection] = "from keychain"
+        XCTAssertTrue(prompt.hasRememberedPassphrase(for: connection))
+
+        prompt.forget(connection)
+        XCTAssertFalse(prompt.hasRememberedPassphrase(for: connection))
+    }
 }

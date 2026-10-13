@@ -38,6 +38,9 @@ struct SyncCommand: AsyncParsableCommand {
     @Option(help: "Skip paths matching this pattern, on both sides (repeatable). `node_modules` or `*.log` match at any depth; `build/cache` matches from the synced folder. Excluded paths are never deleted.")
     var exclude: [String] = []
 
+    @Flag(help: "Print one JSON report instead of a line per action.")
+    var json = false
+
     @Flag(help: "With --delete, allow an empty source folder to empty the destination.")
     var allowEmptySource = false
 
@@ -74,22 +77,36 @@ struct SyncCommand: AsyncParsableCommand {
         )
         let plan = comparison.plan
         let transferVerb = direction == .up ? "upload" : "download"
+        func verb(_ action: SyncAction) -> String {
+            switch action.kind {
+            case .createDirectory: return "mkdir"
+            case .transfer:        return transferVerb
+            case .delete:          return "delete"
+            case .skip:            return "skip"
+            }
+        }
+
+        // What --json prints at the end; filled in as things happen.
+        var report = Report(direction: direction.rawValue, dryRun: dryRun)
+        func note(_ action: SyncAction, _ status: String) {
+            report.actions.append(.init(action: verb(action), path: action.relativePath, reason: action.reason,
+                                        size: action.size, status: status))
+        }
+        defer { if json { printJSON(report) } }
 
         for skipped in plan.skips {
             say("skip \(skipped.relativePath) (\(skipped.reason))")
+            note(skipped, "skipped")
         }
         guard plan.hasChanges else {
             say("Already in sync.")
             return
         }
         if dryRun {
-            for action in plan.actions {
-                switch action.kind {
-                case .createDirectory: say("mkdir \(action.relativePath)")
-                case .transfer:        say("\(transferVerb) \(action.relativePath) (\(action.reason))")
-                case .delete:          say("delete \(action.relativePath)")
-                case .skip:            break
-                }
+            for action in plan.actions where action.kind != .skip {
+                say(action.kind == .transfer ? "\(verb(action)) \(action.relativePath) (\(action.reason))"
+                                             : "\(verb(action)) \(action.relativePath)")
+                note(action, "planned")
             }
             say("Dry run: \(summary(of: plan, transferVerb: transferVerb)). Nothing was changed.")
             return
@@ -100,12 +117,15 @@ struct SyncCommand: AsyncParsableCommand {
         /// Decided when the first deletion comes up: true if something
         /// before it failed.
         var deletionsSkipped: Bool?
-        func attempt(_ label: String, _ work: () async throws -> Void) async {
+        func attempt(_ action: SyncAction, _ work: () async throws -> Void) async {
+            let label = "\(verb(action)) \(action.relativePath)"
             do {
                 try await work()
                 say(label)
+                note(action, "done")
             } catch {
                 failures += 1
+                note(action, "failed")
                 FileHandle.standardError.write(Data("failed: \(label): \(error.localizedDescription)\n".utf8))
             }
         }
@@ -122,7 +142,7 @@ struct SyncCommand: AsyncParsableCommand {
             let remotePath = FolderSync.joined(remoteRoot, action.relativePath)
             switch action.kind {
             case .createDirectory:
-                await attempt("mkdir \(action.relativePath)") {
+                await attempt(action) {
                     if direction == .up {
                         try await client.createDirectory(at: remotePath)
                     } else {
@@ -130,7 +150,7 @@ struct SyncCommand: AsyncParsableCommand {
                     }
                 }
             case .transfer:
-                await attempt("\(transferVerb) \(action.relativePath)") {
+                await attempt(action) {
                     if direction == .up {
                         try await client.upload(from: localURL, remotePath: remotePath, resume: false) { _, _ in }
                         // So the next run sees the pair as in sync, where the server allows it.
@@ -152,8 +172,11 @@ struct SyncCommand: AsyncParsableCommand {
                 // "transfer the new name, delete the old", and deleting the
                 // old after the new failed to arrive would lose it.
                 if deletionsSkipped == nil { deletionsSkipped = failures > 0 }
-                if deletionsSkipped == true { continue }
-                await attempt("delete \(action.relativePath)") {
+                if deletionsSkipped == true {
+                    note(action, "skipped")
+                    continue
+                }
+                await attempt(action) {
                     if direction == .up {
                         try await client.delete(at: remotePath, isDirectory: action.isDirectory)
                     } else {
@@ -171,7 +194,29 @@ struct SyncCommand: AsyncParsableCommand {
         } else {
             say("Done: \(summary(of: plan, transferVerb: transferVerb)).")
         }
+        report.failed = failures
         if failures > 0 { throw Incomplete(failures: failures) }
+    }
+
+    private struct Report: Encodable {
+        struct Entry: Encodable {
+            let action: String
+            let path: String
+            let reason: String
+            let size: Int64?
+            /// planned (dry run), done, failed, or skipped.
+            let status: String
+        }
+        let direction: String
+        let dryRun: Bool
+        var actions: [Entry] = []
+        var failed = 0
+    }
+
+    private func printJSON(_ report: Report) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if let data = try? encoder.encode(report), let text = String(data: data, encoding: .utf8) { print(text) }
     }
 
     private func summary(of plan: SyncPlan, transferVerb: String) -> String {
@@ -183,6 +228,6 @@ struct SyncCommand: AsyncParsableCommand {
     }
 
     private func say(_ line: String) {
-        if !global.quiet { print(line) }
+        if !global.quiet && !json { print(line) }
     }
 }

@@ -27,6 +27,15 @@ final class SyncViewModel: Identifiable {
     var direction: SyncDirection = .upload { didSet { if direction != oldValue { invalidate() } } }
     var deleteExtraneous = false          { didSet { if deleteExtraneous != oldValue { invalidate() } } }
     var sizeOnly = false                  { didSet { if sizeOnly != oldValue { invalidate() } } }
+    /// Patterns to skip, as typed: separated by commas or new lines
+    /// (`node_modules, *.log`). See `FolderSync.matches` for what they mean.
+    var excludeText: String               { didSet { if excludeText != oldValue { invalidate() } } }
+
+    static func patterns(from text: String) -> [String] {
+        text.split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
 
     private(set) var phase: Phase = .idle
     private(set) var plan: SyncPlan?
@@ -43,8 +52,10 @@ final class SyncViewModel: Identifiable {
 
     init(
         connection: Connection, localRoot: URL, remoteRoot: String, queue: TransferQueueViewModel,
+        excludeText: String = "",
         trash: @escaping (URL) throws -> Void = { try LocalFileService.shared.delete(at: $0) }
     ) {
+        self.excludeText = excludeText
         self.connection = connection
         self.localRoot = localRoot
         self.remoteRoot = remoteRoot
@@ -53,7 +64,8 @@ final class SyncViewModel: Identifiable {
     }
 
     private var options: SyncOptions {
-        SyncOptions(deleteExtraneous: deleteExtraneous, sizeOnly: sizeOnly)
+        SyncOptions(deleteExtraneous: deleteExtraneous, sizeOnly: sizeOnly,
+                    excludes: Self.patterns(from: excludeText))
     }
 
     private func invalidate() {

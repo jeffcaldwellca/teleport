@@ -19,7 +19,8 @@ public enum FolderWalkError: Error, CustomStringConvertible {
 }
 
 public enum FolderWalk {
-    public static let defaultLimit = 2000
+    /// Same ceiling as `tport sync` and the app's folder transfers.
+    public static let defaultLimit = FolderSync.defaultLimit
 
     /// Symlinks are skipped — following them risks cycles and surprising escapes
     /// from the transferred tree, same rationale as the GUI's folder transfer.

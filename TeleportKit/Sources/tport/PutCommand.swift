@@ -64,6 +64,11 @@ struct PutCommand: AsyncParsableCommand {
             printer.update(bytes: bytes, total: total)
         }
         printer.finish()
+        // Best effort (servers without MFMT/SETSTAT ignore it): keep the
+        // file's modification time, as the app and `sync` do.
+        if let modified = (try? localURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
+            await client.setModifiedDate(modified, at: remotePath)
+        }
         if !global.quiet { print(remotePath) }
     }
 

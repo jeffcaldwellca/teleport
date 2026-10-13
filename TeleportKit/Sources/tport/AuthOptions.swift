@@ -64,8 +64,12 @@ struct AuthOptions: ParsableArguments {
         return String(cString: entered)
     }
 
-    private static var defaultKnownHostsURL: URL {
+    static var defaultKnownHostsURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".teleport/known_hosts.json")
+    }
+
+    static var defaultTrustedCertsURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: ".teleport/trusted_certs.json")
     }
 
     func makeHostKeyStore() -> SSHHostKeyStore {
@@ -74,8 +78,7 @@ struct AuthOptions: ParsableArguments {
     }
 
     func makeCertificateStore() -> SSHHostKeyStore {
-        let url = trustedCerts.map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".teleport/trusted_certs.json")
+        let url = trustedCerts.map { URL(fileURLWithPath: $0) } ?? Self.defaultTrustedCertsURL
         return SSHHostKeyStore(storeURL: url)
     }
 

@@ -214,7 +214,7 @@ extension AppState {
         copy.name      = "\(conn.displayTitle) copy"
         let pw         = connectionStore.password(for: conn)
         try? connectionStore.add(copy, password: pw)
-        // Carry the SSH-key sandbox bookmark over so the copy can read the key
+        // Carry the SSH-key bookmark over so the copy can read the key
         // without the user re-selecting it.
         try? BookmarkStore.shared.duplicate(
             name: BookmarkStore.sshKeyName(for: conn.id),
