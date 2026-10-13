@@ -29,6 +29,7 @@ app that feels like one.
 - **FTP, FTPS, and SFTP** in one client, with SSH keys (ed25519, ECDSA, RSA; passphrases and ssh-agent supported) and host-key verification
 - **`tport`**, a scriptable CLI, bundled with the app and installable from Settings
 - **Resume &amp; conflict handling** — interrupted transfers pick up where they left off, with overwrite/skip/if-newer policies
+- **Folder sync** — compare a local and a remote folder and transfer only what differs, with a preview
 - **Transfer queue** for tracking multiple in-flight uploads and downloads
 - **Saved connections** with Keychain-backed credential storage, importable from `~/.ssh/config`
 - **In-place remote file editing** — edit a remote file without a manual download/upload round trip
@@ -60,12 +61,23 @@ tport ls sftp://user@example.com/
 # Host aliases from ~/.ssh/config work too (HostName, User, Port, IdentityFile)
 tport ls sftp://my-server/var/www
 
+# Deploy: upload only what changed, and remove what's gone (preview first with --dry-run)
+tport sync ./dist sftp://user@example.com/var/www --delete --exclude '*.map'
+
+# Pull a remote folder down to a local copy
+tport sync ./backup sftp://user@example.com/var/www --direction down
+
 # Check connectivity and auth only
 tport test sftp://user@example.com
 
 # FTPS server with a self-signed certificate: trust it once, then it's remembered
 tport ls ftps://user@example.com/ --accept-untrusted-cert
 ```
+
+`tport sync` is a one-way mirror: a file is transferred when it's missing at the
+destination, a different size, or newer at the source. Nothing is deleted without
+`--delete`, excluded paths are never deleted, and an empty source refuses to empty
+the destination.
 
 Other subcommands: `mkdir`, `rm`, `mv`, `chmod`, `chown`, `stat`. Run `tport --help`
 or `tport <command> --help` for full usage. Homebrew installs put it on your `PATH`

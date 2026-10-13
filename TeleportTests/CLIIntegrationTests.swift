@@ -300,4 +300,145 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("testuser@127.0.0.1:2222"), result.stderr)
         XCTAssertTrue(result.stderr.contains("--no-ssh-config"), result.stderr)
     }
+
+    // MARK: - sync
+
+    private struct SyncFixture {
+        let local: URL
+        let remoteURL: String
+        let options: [String]
+    }
+
+    /// A small local site and a fresh remote folder on the SFTP or FTP server.
+    private func syncFixture(ftp: Bool = false) throws -> SyncFixture {
+        let local = FileManager.default.temporaryDirectory.appending(component: "tport-it-sync-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: local) }
+        for (path, contents) in [("index.html", "<h1>hello</h1>"), ("css/site.css", "body{}"), ("js/app.js", "run()")] {
+            let url = local.appending(path: path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(contents.utf8).write(to: url)
+        }
+        let name = "sync-\(UUID().uuidString)"
+        if ftp {
+            return SyncFixture(local: local, remoteURL: "ftp://testuser:testpass@127.0.0.1:2121/ftp/testuser/\(name)", options: [])
+        }
+        return SyncFixture(local: local, remoteURL: "sftp://testuser:testpass@127.0.0.1:2222/upload/\(name)",
+                           options: ["--known-hosts", knownHostsFile(), "--accept-new-hostkey", "--no-ssh-config"])
+    }
+
+    private func sync(_ fixture: SyncFixture, _ extra: [String] = [], local: URL? = nil) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        try run(["sync", (local ?? fixture.local).path, fixture.remoteURL] + fixture.options + extra)
+    }
+
+    private func lines(_ output: String, starting prefix: String) -> [String] {
+        output.split(separator: "\n").map(String.init).filter { $0.hasPrefix(prefix) }.sorted()
+    }
+
+    /// On both servers — the FTP one only lists times to the minute, which is
+    /// exactly where a naive comparison re-uploads everything every time.
+    func test_sync_uploadsEverythingOnce_thenOnlyWhatChanged() throws {
+        try requireServers()
+        for ftp in [false, true] {
+            let fixture = try syncFixture(ftp: ftp)
+
+            let first = try sync(fixture)
+            XCTAssertEqual(first.exitCode, 0, first.stderr)
+            XCTAssertEqual(lines(first.stdout, starting: "upload "),
+                           ["upload css/site.css", "upload index.html", "upload js/app.js"], "ftp: \(ftp)")
+
+            let second = try sync(fixture)
+            XCTAssertEqual(second.exitCode, 0, second.stderr)
+            XCTAssertEqual(lines(second.stdout, starting: "upload "), [], "ftp: \(ftp) — \(second.stdout)")
+            XCTAssertTrue(second.stdout.contains("Already in sync"), second.stdout)
+
+            try Data("body{color:red}".utf8).write(to: fixture.local.appending(path: "css/site.css"))
+            let third = try sync(fixture)
+            XCTAssertEqual(lines(third.stdout, starting: "upload "), ["upload css/site.css"], "ftp: \(ftp)")
+        }
+    }
+
+    func test_sync_dryRun_changesNothing() throws {
+        try requireServers()
+        let fixture = try syncFixture()
+
+        let dry = try sync(fixture, ["--dry-run"])
+        XCTAssertEqual(dry.exitCode, 0, dry.stderr)
+        XCTAssertEqual(lines(dry.stdout, starting: "upload ").count, 3)
+        XCTAssertTrue(dry.stdout.contains("Nothing was changed"), dry.stdout)
+
+        // Had the dry run uploaded anything, this run would find it in place.
+        let real = try sync(fixture)
+        XCTAssertEqual(lines(real.stdout, starting: "upload ").count, 3)
+    }
+
+    func test_sync_delete_removesWhatIsNoLongerInTheSource_andOnlyWhenAsked() throws {
+        try requireServers()
+        let fixture = try syncFixture()
+        XCTAssertEqual(try sync(fixture).exitCode, 0)
+        try FileManager.default.removeItem(at: fixture.local.appending(path: "js"))
+
+        let keeping = try sync(fixture)
+        XCTAssertEqual(lines(keeping.stdout, starting: "delete "), [])
+
+        let deleting = try sync(fixture, ["--delete"])
+        XCTAssertEqual(deleting.exitCode, 0, deleting.stderr)
+        XCTAssertEqual(lines(deleting.stdout, starting: "delete "), ["delete js", "delete js/app.js"])
+
+        let after = try sync(fixture, ["--delete"])
+        XCTAssertTrue(after.stdout.contains("Already in sync"), after.stdout)
+    }
+
+    func test_sync_down_bringsALocalFolderUpToDate() throws {
+        try requireServers()
+        let fixture = try syncFixture()
+        XCTAssertEqual(try sync(fixture).exitCode, 0)
+        let copy = FileManager.default.temporaryDirectory.appending(component: "tport-it-sync-down-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: copy) }
+
+        let down = try sync(fixture, ["--direction", "down"], local: copy)
+        XCTAssertEqual(down.exitCode, 0, down.stderr)
+        XCTAssertEqual(lines(down.stdout, starting: "download ").count, 3)
+        for path in ["index.html", "css/site.css", "js/app.js"] {
+            XCTAssertEqual(try Data(contentsOf: copy.appending(path: path)),
+                           try Data(contentsOf: fixture.local.appending(path: path)), path)
+        }
+
+        let again = try sync(fixture, ["--direction", "down"], local: copy)
+        XCTAssertTrue(again.stdout.contains("Already in sync"), again.stdout)
+    }
+
+    /// A mistyped or unmounted source must not empty the server.
+    func test_sync_emptyOrMissingSource_withDelete_isRefused_andDeletesNothing() throws {
+        try requireServers()
+        let fixture = try syncFixture()
+        XCTAssertEqual(try sync(fixture).exitCode, 0)
+        let empty = FileManager.default.temporaryDirectory.appending(component: "tport-it-sync-empty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: empty) }
+
+        let refused = try sync(fixture, ["--delete"], local: empty)
+        XCTAssertNotEqual(refused.exitCode, 0)
+        XCTAssertTrue(refused.stderr.lowercased().contains("empty"), refused.stderr)
+
+        let missing = try sync(fixture, ["--delete"], local: empty.appending(path: "not-here"))
+        XCTAssertNotEqual(missing.exitCode, 0)
+        XCTAssertTrue(missing.stderr.contains("doesn\u{2019}t exist") || missing.stderr.contains("doesn't exist"), missing.stderr)
+
+        // Everything is still on the server.
+        XCTAssertTrue(try sync(fixture).stdout.contains("Already in sync"))
+    }
+
+    func test_sync_continuesPastAFileItCannotRead_andExitsNonZero() throws {
+        try requireServers()
+        let fixture = try syncFixture()
+        let unreadable = fixture.local.appending(path: "css/site.css")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+
+        let result = try sync(fixture)
+
+        XCTAssertEqual(result.exitCode, 1, result.stderr)
+        XCTAssertTrue(result.stderr.contains("failed: upload css/site.css"), result.stderr)
+        XCTAssertEqual(lines(result.stdout, starting: "upload "), ["upload index.html", "upload js/app.js"])
+    }
 }
