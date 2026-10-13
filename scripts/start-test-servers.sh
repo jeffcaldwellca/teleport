@@ -42,4 +42,16 @@ docker run -d --name teleport-it-ftps-implicit -p 990:990 -p 30020-30029:30020-3
   -ossl_enable=YES -oallow_anon_ssl=NO -oforce_local_data_ssl=YES -oforce_local_logins_ssl=YES \
   -ossl_ciphers=HIGH -oimplicit_ssl=YES -olisten_port=990 -obackground=NO >/dev/null
 
+# The FTP image occasionally loses a startup race and exits straight away
+# ("process has died, quitting"); give stragglers a few more tries.
+for name in teleport-it-ftp teleport-it-sftp teleport-it-ftps teleport-it-ftps-implicit; do
+  for attempt in 1 2 3 4 5; do
+    sleep 2
+    [ "$(docker inspect -f '{{.State.Running}}' "$name")" = "true" ] && continue 2
+    docker start "$name" >/dev/null
+  done
+  echo "error: $name did not stay up; see 'docker logs $name'" >&2
+  exit 1
+done
+
 echo "Test servers started: teleport-it-ftp, teleport-it-sftp, teleport-it-ftps, teleport-it-ftps-implicit"

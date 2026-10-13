@@ -424,7 +424,7 @@ final class TransferIntegrationTests: XCTestCase {
 
         let queue = TransferQueueViewModel(
             passwordProvider: { _ in Self.password },
-            clientFactory: { [self] _, _ in sftpTestClient() }
+            clientFactory: { [self] _, _ in SlowedDownloadClient(base: sftpTestClient()) }
         )
         let task = try XCTUnwrap(queue.enqueue(
             connection: sftpConnection(), direction: .download,
@@ -446,7 +446,7 @@ final class TransferIntegrationTests: XCTestCase {
     func test_queue_pauseResume_sftp_producesIdenticalFile() async throws {
         try requireServers()
         let dir = try makeTempDir()
-        // Large enough that the emulated docker sshd can't finish before pause.
+        // Downloaded through SlowedDownloadClient, so it can't finish before the pause.
         let original = try writeRandomFile(in: dir, name: "original.bin", size: 12_000_000)
         let remotePath = "/upload/pause-\(UUID().uuidString).bin"
 
@@ -457,7 +457,7 @@ final class TransferIntegrationTests: XCTestCase {
 
         let queue = TransferQueueViewModel(
             passwordProvider: { _ in Self.password },
-            clientFactory: { [self] _, _ in sftpTestClient() }
+            clientFactory: { [self] _, _ in SlowedDownloadClient(base: sftpTestClient()) }
         )
         let dest = dir.appending(component: "queued.bin")
         let task = try XCTUnwrap(queue.enqueue(
@@ -511,4 +511,44 @@ final class TransferIntegrationTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.name == "upload" })
         await client.disconnect()
     }
+}
+
+/// Forwards to `base`, holding each download progress tick for a moment so a
+/// test can reliably pause or cancel a transfer while it is still in flight.
+private final class SlowedDownloadClient: RemoteClient, @unchecked Sendable {
+    private let base: RemoteClient
+    init(base: RemoteClient) { self.base = base }
+
+    func download(remotePath: String, to localURL: URL, resume: Bool,
+                  progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
+        try await base.download(remotePath: remotePath, to: localURL, resume: resume) { bytes, total in
+            Thread.sleep(forTimeInterval: 0.01)
+            progress(bytes, total)
+        }
+    }
+
+    func connect() async throws { try await base.connect() }
+    func disconnect() async { await base.disconnect() }
+    func listDirectory(at absolutePath: String) async throws -> [FileItem] {
+        try await base.listDirectory(at: absolutePath)
+    }
+    func upload(from localURL: URL, remotePath: String, resume: Bool,
+                progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
+        try await base.upload(from: localURL, remotePath: remotePath, resume: resume, progress: progress)
+    }
+    func keepAlive() async { await base.keepAlive() }
+    func createDirectory(at absolutePath: String) async throws { try await base.createDirectory(at: absolutePath) }
+    func delete(at absolutePath: String, isDirectory: Bool) async throws {
+        try await base.delete(at: absolutePath, isDirectory: isDirectory)
+    }
+    func rename(from: String, to: String) async throws { try await base.rename(from: from, to: to) }
+    func setPermissions(_ octal: Int, at absolutePath: String) async throws {
+        try await base.setPermissions(octal, at: absolutePath)
+    }
+    func setOwnership(owner: String, group: String, at absolutePath: String) async throws {
+        try await base.setOwnership(owner: owner, group: group, at: absolutePath)
+    }
+    func remoteModifiedDate(at remotePath: String) async -> Date? { await base.remoteModifiedDate(at: remotePath) }
+    func setModifiedDate(_ date: Date, at remotePath: String) async { await base.setModifiedDate(date, at: remotePath) }
+    func fileExists(at remotePath: String) async -> Bool { await base.fileExists(at: remotePath) }
 }
