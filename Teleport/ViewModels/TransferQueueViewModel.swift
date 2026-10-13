@@ -14,6 +14,35 @@ struct ConflictInfo: Identifiable {
     let remoteModifiedDate: Date?
 }
 
+// MARK: - Progress Throttle
+
+/// Clients report progress once per chunk — thousands of times a second on a
+/// fast link. Forward at most ~10 a second, plus always the final one, so the
+/// main actor isn't flooded with updates the eye can't see anyway.
+final class ProgressThrottle: @unchecked Sendable {
+    private static let interval: TimeInterval = 0.1
+
+    private let forward: @Sendable (Int64, Int64) -> Void
+    private let lock = NSLock()
+    private var lastForwarded = Date.distantPast
+
+    init(_ forward: @escaping @Sendable (Int64, Int64) -> Void) {
+        self.forward = forward
+    }
+
+    func callAsFunction(_ bytes: Int64, _ total: Int64) {
+        let now = Date()
+        let due = lock.withLock { () -> Bool in
+            guard (total > 0 && bytes >= total) || now.timeIntervalSince(lastForwarded) >= Self.interval else {
+                return false
+            }
+            lastForwarded = now
+            return true
+        }
+        if due { forward(bytes, total) }
+    }
+}
+
 // MARK: - TransferQueueViewModel
 
 @Observable
@@ -36,6 +65,10 @@ final class TransferQueueViewModel {
     /// Number of running transfer workers. Bounded by `maxConcurrentTransfers`.
     private var workerCount = 0
 
+    /// Index `claimNextQueued` resumes scanning from. Reset whenever an
+    /// earlier task can become queued again or the array is rearranged.
+    private var queuedSearchStart = 0
+
     /// The running transfer per task id, so `cancel` can interrupt an in-flight
     /// transfer (not just mark it). Cancelling the handle propagates into the
     /// client's read/write loop via `Task.isCancelled`.
@@ -50,7 +83,7 @@ final class TransferQueueViewModel {
     ///   substitute a scripted one.
     init(
         passwordProvider: @escaping (Connection) -> String,
-        clientFactory: @escaping (Connection, String) -> RemoteClient = RemoteClientFactory.make(for:password:)
+        clientFactory: @escaping (Connection, String) -> RemoteClient = RemoteClientFactory.makeForTransfers(for:password:)
     ) {
         self.passwordProvider = passwordProvider
         self.clientFactory = clientFactory
@@ -114,6 +147,34 @@ final class TransferQueueViewModel {
         return task
     }
 
+    /// `enqueue` for a whole folder's worth of files. Checks for duplicates
+    /// against one precomputed set instead of rescanning the queue per file,
+    /// which is quadratic and stalls the UI for thousands of items.
+    private func enqueueBatch(
+        connection: Connection,
+        direction: TransferDirection,
+        items: [(local: URL, remote: String)]
+    ) {
+        guard !items.isEmpty else { return }
+        if !tasks.contains(where: { !$0.status.isFinal }) {
+            batchResolution = nil
+        }
+        func key(_ local: URL, _ remote: String) -> String { "\(local.path)\u{0}\(remote)" }
+        var pending = Set(
+            tasks.lazy
+                .filter { !$0.status.isFinal && $0.direction == direction }
+                .map { key($0.effectiveLocalURL, $0.effectiveRemotePath) }
+        )
+        for item in items where pending.insert(key(item.local, item.remote)).inserted {
+            tasks.append(TransferTask(
+                connection: connection, direction: direction,
+                localURL: item.local, remotePath: item.remote
+            ))
+        }
+        setVisible(true)
+        startWorkers()
+    }
+
     // MARK: - Queue Processing
 
     /// Spin up transfer workers up to the user's concurrency limit. Each worker
@@ -128,13 +189,48 @@ final class TransferQueueViewModel {
 
     private func workerLoop() async {
         defer { workerCount -= 1 }
+        // The connection this worker keeps between tasks, so a run of files
+        // for one server costs a single login instead of one per file.
+        let kept = KeptConnection()
         while let task = claimNextQueued() {
             // Run the transfer in its own handle so `cancel(task)` can interrupt
             // just this transfer without killing the worker.
-            let handle = Task { await processTask(task) }
+            let handle = Task { await processTask(task, kept: kept) }
             transferHandles[task.id] = handle
             await handle.value
             transferHandles.removeValue(forKey: task.id)
+        }
+        await kept.close()
+    }
+
+    /// A worker's idle connection, held between tasks.
+    @MainActor
+    private final class KeptConnection {
+        private var connection: Connection?
+        private var client: RemoteClient?
+
+        func keep(_ client: RemoteClient, for connection: Connection) {
+            self.client = client
+            self.connection = connection
+        }
+
+        /// Hand back the kept client if it is for `connection` and still
+        /// answers. The liveness check matters beyond saving a retry: the
+        /// conflict check's `fileExists` reports a dead connection as "no
+        /// such file", which would let an upload overwrite without asking.
+        func take(for connection: Connection) async -> RemoteClient? {
+            guard let client else { return nil }
+            self.client = nil
+            if self.connection == connection, (try? await client.ping()) != nil {
+                return client
+            }
+            await client.disconnect()
+            return nil
+        }
+
+        func close() async {
+            await client?.disconnect()
+            client = nil
         }
     }
 
@@ -142,36 +238,64 @@ final class TransferQueueViewModel {
     /// happen with no `await` in between on the MainActor, so two workers can
     /// never grab the same task.
     private func claimNextQueued() -> TransferTask? {
-        guard let task = tasks.first(where: { $0.status == .queued }) else { return nil }
+        // Everything before `queuedSearchStart` has already been claimed, so
+        // a long queue isn't rescanned from the top for every task.
+        let start = min(queuedSearchStart, tasks.count)
+        guard let index = tasks[start...].firstIndex(where: { $0.status == .queued }) else {
+            queuedSearchStart = tasks.count
+            return nil
+        }
+        queuedSearchStart = index + 1
+        let task = tasks[index]
         task.status = .connecting
         return task
     }
 
-    private func processTask(_ task: TransferTask) async {
-        let maxRetries = TransferStatus.maxRetries
+    private enum TransferOutcome {
+        /// The task reached a terminal state (completed / failed / cancelled / paused).
+        case finished
+        /// Failed in a retryable way; the attempt has been counted and waited out.
+        case retry
+        /// Failed on a connection kept from an earlier task. That says nothing
+        /// about this task, so run it again on a fresh connection without
+        /// spending one of its retries.
+        case redoOnFreshConnection
+    }
 
-        for attempt in 0...maxRetries {
+    private func processTask(_ task: TransferTask, kept: KeptConnection) async {
+        let maxRetries = TransferStatus.maxRetries
+        var attempt = 0
+
+        while attempt <= maxRetries {
             if Task.isCancelled || task.status == .cancelled {
                 settleInterruption(task)
                 return
             }
 
-            // --- Connect ---
+            // --- Connect (or pick up this worker's kept connection) ---
             task.status = attempt == 0 ? .connecting : .retrying(attempt)
             let password = passwordProvider(task.connection)
-            let client = clientFactory(task.connection, password)
-
-            do {
-                try await client.connect()
-            } catch {
-                await client.disconnect()
-                if error is CancellationError { settleInterruption(task); return }
-                if isFatal(error) || attempt >= maxRetries {
-                    task.status = .failed(friendlyMessage(error))
-                    return
+            let client: RemoteClient
+            let reused: Bool
+            if let keptClient = await kept.take(for: task.connection) {
+                client = keptClient
+                reused = true
+            } else {
+                client = clientFactory(task.connection, password)
+                reused = false
+                do {
+                    try await client.connect()
+                } catch {
+                    await client.disconnect()
+                    if error is CancellationError { settleInterruption(task); return }
+                    if isFatal(error) || attempt >= maxRetries {
+                        task.status = .failed(friendlyMessage(error))
+                        return
+                    }
+                    try? await Task.sleep(for: .seconds(retryDelay(attempt: attempt + 1)))
+                    attempt += 1
+                    continue
                 }
-                try? await Task.sleep(for: .seconds(retryDelay(attempt: attempt + 1)))
-                continue
             }
 
             // Re-check after the connect round trip: the user may have hit
@@ -209,21 +333,10 @@ final class TransferQueueViewModel {
                 localDate   = nil
                 remoteDate  = nil
             }
-            if !hasConflict { task.conflictSettled = true }
 
-            if hasConflict {
-                // A predetermined overwrite (remote-edit auto-uploads) needs no
-                // dialog — keep the live connection and transfer right away.
-                if task.conflictBehavior == .overwrite {
-                    task.conflictSettled = true
-                    let shouldRetry = await performTransfer(
-                        task: task, client: client,
-                        attempt: attempt, maxRetries: maxRetries
-                    )
-                    if shouldRetry { continue }
-                    return
-                }
-
+            var transferClient = client
+            var transferReused = reused
+            if hasConflict && task.conflictBehavior != .overwrite {
                 // Disconnect before waiting for user — server may time out the idle connection.
                 await client.disconnect()
 
@@ -269,36 +382,39 @@ final class TransferQueueViewModel {
                         return
                     }
                     try? await Task.sleep(for: .seconds(retryDelay(attempt: attempt + 1)))
+                    attempt += 1
                     continue
                 }
-
-                let shouldRetry = await performTransfer(
-                    task: task, client: freshClient,
-                    attempt: attempt, maxRetries: maxRetries
-                )
-                if shouldRetry { continue }
-                return
+                transferClient = freshClient
+                transferReused = false
             }
+            // No conflict, or a predetermined overwrite (remote-edit
+            // auto-uploads) that needs no dialog: transfer on the live connection.
+            task.conflictSettled = true
 
             // --- Transfer ---
-            let shouldRetry = await performTransfer(
-                task: task, client: client,
+            let outcome = await performTransfer(
+                task: task, client: transferClient, reused: transferReused, kept: kept,
                 attempt: attempt, maxRetries: maxRetries
             )
-            if shouldRetry { continue }
-            return
+            switch outcome {
+            case .finished:              return
+            case .retry:                 attempt += 1
+            case .redoOnFreshConnection: break
+            }
         }
     }
 
-    /// Run the transfer, returning `true` if the caller's outer attempt loop
-    /// should keep iterating to retry, `false` once the task is in a terminal
-    /// state (completed / failed / cancelled).
+    /// Run the transfer and say what the caller's attempt loop should do next.
+    /// On success the connection goes back to the worker for its next task.
     private func performTransfer(
         task: TransferTask,
         client: RemoteClient,
+        reused: Bool,
+        kept: KeptConnection,
         attempt: Int,
         maxRetries: Int
-    ) async -> Bool {
+    ) async -> TransferOutcome {
         task.status = .active
         task.start()
 
@@ -320,24 +436,25 @@ final class TransferQueueViewModel {
             // A stall watchdog cancels the transfer if no progress is made for
             // a while (covers SFTP, which lacks FTP's socket-level read
             // timeout) — surfacing as a retry.
+            let report = ProgressThrottle { bytes, total in
+                Task { @MainActor in task.updateProgress(bytes: bytes, total: total) }
+            }
             try await runWithStallWatchdog(task: task) {
                 switch task.direction {
                 case .download:
                     try await client.download(
                         remotePath: task.effectiveRemotePath,
                         to: task.effectiveLocalURL,
-                        resume: resume
-                    ) { bytes, total in
-                        Task { @MainActor in task.updateProgress(bytes: bytes, total: total) }
-                    }
+                        resume: resume,
+                        progress: report.callAsFunction
+                    )
                 case .upload:
                     try await client.upload(
                         from: task.effectiveLocalURL,
                         remotePath: task.effectiveRemotePath,
-                        resume: resume
-                    ) { bytes, total in
-                        Task { @MainActor in task.updateProgress(bytes: bytes, total: total) }
-                    }
+                        resume: resume,
+                        progress: report.callAsFunction
+                    )
                 }
             }
             // Preserve modification times so "overwrite if newer" stays
@@ -357,7 +474,7 @@ final class TransferQueueViewModel {
                     await client.setModifiedDate(local, at: task.effectiveRemotePath)
                 }
             }
-            await client.disconnect()
+            kept.keep(client, for: task.connection)
             task.status = .completed
             task.progress = 1.0
             NotificationCenter.default.post(
@@ -365,26 +482,27 @@ final class TransferQueueViewModel {
                 object: nil,
                 userInfo: ["direction": task.direction == .download ? "download" : "upload"]
             )
-            return false
+            return .finished
         } catch {
             await client.disconnect()
             // User cancellation or pause: stop immediately, don't retry.
             if error is CancellationError {
                 settleInterruption(task)
-                return false
+                return .finished
             }
-            if isFatal(error) || attempt >= maxRetries {
+            if isFatal(error) {
                 task.status = .failed(friendlyMessage(error))
-                return false
+                return .finished
+            }
+            if reused { return .redoOnFreshConnection }
+            if attempt >= maxRetries {
+                task.status = .failed(friendlyMessage(error))
+                return .finished
             }
             task.status = .retrying(attempt + 1)
             task.retryCount = attempt + 1
             try? await Task.sleep(for: .seconds(retryDelay(attempt: attempt + 1)))
-            // Tell the outer loop to retry — staying within this `for attempt`
-            // iteration so the attempt counter actually advances. Previously
-            // we set status back to `.queued` and returned, which caused
-            // processQueue to re-pick the same task and restart attempt at 0.
-            return true
+            return .retry
         }
     }
 
@@ -563,6 +681,7 @@ final class TransferQueueViewModel {
         task.pauseRequested = false
         task.resumeOnNextAttempt = true  // attempt 0 must append, not truncate
         task.status = .queued
+        queuedSearchStart = 0
         startWorkers()
     }
 
@@ -598,6 +717,7 @@ final class TransferQueueViewModel {
             if case .failed = task.status { discardPartial(task) }
         }
         tasks.removeAll { $0.status.isFinal }
+        queuedSearchStart = 0
     }
 
     /// Re-queue a single failed transfer from the start.
@@ -629,11 +749,13 @@ final class TransferQueueViewModel {
         // conflict was already settled on the first run.
         task.resumeOnNextAttempt = task.direction == .download
         task.status              = .queued
+        queuedSearchStart        = 0
     }
 
     func removeAll() {
         cancelAll()
         tasks.removeAll()
+        queuedSearchStart = 0
     }
 
     // MARK: - Stats
@@ -751,9 +873,10 @@ final class TransferQueueViewModel {
         let box = ErrorBox()
         let handle = Task {
             do {
-                try await operation { bytes, total in
+                let report = ProgressThrottle { bytes, total in
                     Task { @MainActor in task.updateProgress(bytes: bytes, total: total) }
                 }
+                try await operation(report.callAsFunction)
             } catch {
                 box.error = error
             }
@@ -784,7 +907,7 @@ final class TransferQueueViewModel {
     /// Safety cap on entries a single recursive folder transfer may touch, so a
     /// runaway tree (or a malicious server with a cyclic listing) can't enqueue
     /// unbounded work.
-    nonisolated static let folderTransferLimit = 2000
+    nonisolated static let folderTransferLimit = 10_000
 
     enum FolderTransferError: LocalizedError {
         case tooLarge
@@ -817,7 +940,11 @@ final class TransferQueueViewModel {
             throw FolderTransferError.unsafeName(folderURL.lastPathComponent)
         }
 
-        let (relativeDirs, files) = try Self.walkLocalTree(at: folderURL)
+        // Off the main actor: enumerating a big tree takes long enough to
+        // freeze the UI.
+        let (relativeDirs, files) = try await Task.detached {
+            try Self.walkLocalTree(at: folderURL)
+        }.value
 
         let sep  = remoteParent.hasSuffix("/") ? "" : "/"
         let root = "\(remoteParent)\(sep)\(folderName)"
@@ -829,10 +956,8 @@ final class TransferQueueViewModel {
         for dir in relativeDirs.sorted() {
             try? await client.createDirectory(at: "\(root)/\(dir)")
         }
-        for (local, relative) in files {
-            enqueue(connection: connection, direction: .upload,
-                    localURL: local, remotePath: "\(root)/\(relative)")
-        }
+        enqueueBatch(connection: connection, direction: .upload,
+                     items: files.map { ($0.local, "\(root)/\($0.relative)") })
     }
 
     /// Synchronous local tree walk (directory enumeration isn't async-safe).
@@ -916,9 +1041,7 @@ final class TransferQueueViewModel {
             }
         }
 
-        for (remote, local) in files {
-            enqueue(connection: connection, direction: .download,
-                    localURL: local, remotePath: remote)
-        }
+        enqueueBatch(connection: connection, direction: .download,
+                     items: files.map { ($0.local, $0.remote) })
     }
 }

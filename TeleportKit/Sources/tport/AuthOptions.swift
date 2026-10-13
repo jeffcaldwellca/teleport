@@ -74,7 +74,10 @@ struct AuthOptions: ParsableArguments {
                 connection: connection,
                 password: password,
                 certificateStore: makeCertificateStore(),
-                onUntrustedCertificate: { [acceptUntrustedCert] _ in acceptUntrustedCert }
+                onUntrustedCertificate: { [acceptUntrustedCert] _ in acceptUntrustedCert },
+                // tport runs one operation at a time, so transfers can use the
+                // session's own connection instead of a fresh login per file.
+                dedicatedToTransfers: true
             )
         }
     }

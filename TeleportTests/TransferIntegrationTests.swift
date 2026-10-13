@@ -483,6 +483,59 @@ final class TransferIntegrationTests: XCTestCase {
                        "Paused-and-resumed download must be byte-identical")
     }
 
+    /// The queue keeps one connection per worker and, for FTP, runs transfers
+    /// on that connection's own control channel. Several files in a row must
+    /// each arrive intact over the reused session — plain and TLS.
+    @MainActor
+    func test_queue_ftpAndFTPS_severalFilesOverOneReusedConnection() async throws {
+        try requireServers()
+        let savedConcurrency = Preferences.shared.maxConcurrentTransfers
+        Preferences.shared.maxConcurrentTransfers = 1
+        defer { Preferences.shared.maxConcurrentTransfers = savedConcurrency }
+
+        for connection in [ftpConnection(), ftpsConnection()] {
+            let dir = try makeTempDir()
+            let queue = TransferQueueViewModel(
+                passwordProvider: { _ in Self.password },
+                clientFactory: { connection, password in
+                    FTPClient(connection: connection, password: password,
+                              certificateStore: SSHHostKeyStore(storeURL: nil),
+                              onUntrustedCertificate: { _ in true },
+                              dedicatedToTransfers: true)
+                }
+            )
+            let run = UUID().uuidString
+            var originals: [(local: URL, remote: String)] = []
+            for index in 0..<4 {
+                let local = try writeRandomFile(in: dir, name: "up-\(index).bin", size: 150_000 + index * 40_000)
+                originals.append((local, "/ftp/testuser/reuse-\(run)-\(index).bin"))
+            }
+
+            let uploads = try originals.map {
+                try XCTUnwrap(queue.enqueue(connection: connection, direction: .upload,
+                                            localURL: $0.local, remotePath: $0.remote))
+            }
+            try await waitUntil(timeout: 60, "uploads over \(connection.connectionProtocol.rawValue)") {
+                uploads.allSatisfy { $0.status.isFinal }
+            }
+            XCTAssertTrue(uploads.allSatisfy { $0.status == .completed }, "\(uploads.map(\.status))")
+
+            let downloads = try originals.enumerated().map { index, original in
+                try XCTUnwrap(queue.enqueue(connection: connection, direction: .download,
+                                            localURL: dir.appending(component: "down-\(index).bin"),
+                                            remotePath: original.remote))
+            }
+            try await waitUntil(timeout: 60, "downloads over \(connection.connectionProtocol.rawValue)") {
+                downloads.allSatisfy { $0.status.isFinal }
+            }
+            XCTAssertTrue(downloads.allSatisfy { $0.status == .completed }, "\(downloads.map(\.status))")
+            for (index, original) in originals.enumerated() {
+                XCTAssertEqual(try sha256(original.local),
+                               try sha256(dir.appending(component: "down-\(index).bin")))
+            }
+        }
+    }
+
     @MainActor
     private func waitUntil(
         timeout: TimeInterval,
@@ -537,6 +590,7 @@ private final class SlowedDownloadClient: RemoteClient, @unchecked Sendable {
         try await base.upload(from: localURL, remotePath: remotePath, resume: resume, progress: progress)
     }
     func keepAlive() async { await base.keepAlive() }
+    func ping() async throws { try await base.ping() }
     func createDirectory(at absolutePath: String) async throws { try await base.createDirectory(at: absolutePath) }
     func delete(at absolutePath: String, isDirectory: Bool) async throws {
         try await base.delete(at: absolutePath, isDirectory: isDirectory)

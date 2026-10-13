@@ -490,7 +490,12 @@ public actor SFTPClient: RemoteClient {
     // MARK: - Keep-Alive
 
     public func keepAlive() async {
-        _ = try? await sftp?.getAttributes(at: connection.initialPath)
+        try? await ping()
+    }
+
+    public func ping() async throws {
+        guard let sftp else { throw RemoteClientError.notConnected }
+        _ = try await sftp.getRealPath(atPath: ".")
     }
 
     public func setModifiedDate(_ date: Date, at remotePath: String) async {

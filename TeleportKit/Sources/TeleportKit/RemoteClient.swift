@@ -34,6 +34,12 @@ public protocol RemoteClient: AnyObject, Sendable {
     /// Lightweight no-op to keep an idle connection from being dropped.
     func keepAlive() async
 
+    /// One cheap round trip that throws if the connection is no longer
+    /// usable. Lets a caller holding an idle connection find out before
+    /// relying on calls that report failure as "no" (`fileExists`,
+    /// `remoteModifiedDate`).
+    func ping() async throws
+
     /// Create a remote directory (and intermediate parents if possible).
     func createDirectory(at absolutePath: String) async throws
 

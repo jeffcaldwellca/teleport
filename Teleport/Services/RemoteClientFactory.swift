@@ -5,7 +5,19 @@ import TeleportKit
 /// certificate confirmation sheet) into the clients' injectable dependencies. The CLI
 /// has its own equivalent factory with stateless, non-interactive defaults.
 enum RemoteClientFactory {
+    /// A client for one transfer-queue worker: nothing else shares it, so FTP
+    /// transfers can run on its own control connection.
+    static func makeForTransfers(for connection: Connection, password: String) -> RemoteClient {
+        make(for: connection, password: password, dedicatedToTransfers: true)
+    }
+
     static func make(for connection: Connection, password: String) -> RemoteClient {
+        make(for: connection, password: password, dedicatedToTransfers: false)
+    }
+
+    private static func make(
+        for connection: Connection, password: String, dedicatedToTransfers: Bool
+    ) -> RemoteClient {
         switch connection.connectionProtocol {
         case .sftp:
             return SFTPClient(
@@ -44,7 +56,8 @@ enum RemoteClientFactory {
                         fingerprint: certificate.fingerprint,
                         certificateReason: certificate.reason
                     )
-                }
+                },
+                dedicatedToTransfers: dedicatedToTransfers
             )
         }
     }
