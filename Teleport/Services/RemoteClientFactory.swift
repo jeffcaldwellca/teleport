@@ -20,6 +20,9 @@ enum RemoteClientFactory {
     ) -> RemoteClient {
         switch connection.connectionProtocol {
         case .sftp:
+            // What this client was last given, so that if it comes back
+            // saying "that didn't work" the prompt knows which one failed.
+            let lastPassphrase = LastPassphrase()
             return SFTPClient(
                 connection: connection,
                 password: password,
@@ -45,7 +48,11 @@ enum RemoteClientFactory {
                     await HostKeyConfirmation.shared.confirm(host: host, port: port, fingerprint: fingerprint)
                 },
                 passphraseProvider: { keyPath, retry in
-                    await PassphrasePrompt.shared.passphrase(for: connection.id, keyPath: keyPath, retry: retry)
+                    let answer = await PassphrasePrompt.shared.passphrase(
+                        for: connection.id, keyPath: keyPath, rejected: retry ? lastPassphrase.value : nil
+                    )
+                    lastPassphrase.value = answer
+                    return answer
                 }
             )
         case .ftp, .ftps:
@@ -63,5 +70,14 @@ enum RemoteClientFactory {
                 dedicatedToTransfers: dedicatedToTransfers
             )
         }
+    }
+}
+
+private final class LastPassphrase: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: String?
+    var value: String? {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
     }
 }

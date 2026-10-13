@@ -10,7 +10,23 @@ func runTport(_ body: () async throws -> Void) async throws {
         try await body()
     } catch {
         FileHandle.standardError.write(Data("error: \(describe(error))\n".utf8))
+        if let note = FailureNotes.shared.sshConfigResolution {
+            FileHandle.standardError.write(Data("note: \(note)\n".utf8))
+        }
         throw ExitCode(TportExitCode.map(error).rawValue)
+    }
+}
+
+/// Context worth printing alongside an error, recorded as the command runs.
+final class FailureNotes: @unchecked Sendable {
+    static let shared = FailureNotes()
+    private let lock = NSLock()
+    private var _sshConfigResolution: String?
+
+    /// Set when the ssh config changed where an sftp:// URL actually connects.
+    var sshConfigResolution: String? {
+        get { lock.withLock { _sshConfigResolution } }
+        set { lock.withLock { _sshConfigResolution = newValue } }
     }
 }
 

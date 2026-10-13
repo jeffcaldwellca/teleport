@@ -280,4 +280,24 @@ final class CLIIntegrationTests: XCTestCase {
                               "--known-hosts", knownHostsFile(), "--accept-new-hostkey"])
         XCTAssertEqual(result.exitCode, 0, result.stderr)
     }
+
+    /// Reading the ssh config can send a URL somewhere other than its host
+    /// reads. When that connection then fails, the error has to say where it
+    /// really went and how to switch the lookup off.
+    func test_sshConfigAlias_failure_saysWhichConfigEntryWasUsed() throws {
+        try requireKeys()
+        let config = FileManager.default.temporaryDirectory
+            .appending(component: "tport-it-ssh-config-\(UUID().uuidString)")
+        try "Host teleport-it\n  HostName 127.0.0.1\n  Port 2222\n  User testuser\n"
+            .write(to: config, atomically: true, encoding: .utf8)
+        addTeardownBlock { try? FileManager.default.removeItem(at: config) }
+
+        // No --accept-new-hostkey: fails closed on the unknown host key.
+        let result = try run(["ls", "sftp://teleport-it/upload", "--ssh-config", config.path,
+                              "--known-hosts", knownHostsFile(), "--no-agent"])
+        XCTAssertEqual(result.exitCode, 6, result.stderr)   // hostKey
+        XCTAssertTrue(result.stderr.contains("teleport-it"), result.stderr)
+        XCTAssertTrue(result.stderr.contains("testuser@127.0.0.1:2222"), result.stderr)
+        XCTAssertTrue(result.stderr.contains("--no-ssh-config"), result.stderr)
+    }
 }

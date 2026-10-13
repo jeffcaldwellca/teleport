@@ -29,7 +29,7 @@ struct ConnectionEditorView: View {
                 Text(isEditing ? "Edit Connection" : "New Connection")
                     .font(.title3.weight(.semibold))
                 Spacer()
-                Button { dismiss() } label: {
+                Button { discard() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                         .imageScale(.large)
@@ -161,7 +161,7 @@ struct ConnectionEditorView: View {
 
                 Spacer()
 
-                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Cancel", role: .cancel) { discard() }
                     .keyboardShortcut(.cancelAction)
 
                 Button(isEditing ? "Save" : "Add") {
@@ -218,6 +218,14 @@ struct ConnectionEditorView: View {
     }
 
     // MARK: - Actions
+
+    /// Close without saving. Testing a brand-new connection may have
+    /// remembered its key passphrase; with the connection discarded there is
+    /// nothing for that to belong to.
+    private func discard() {
+        if !isEditing { PassphrasePrompt.shared.forget(connection.id) }
+        dismiss()
+    }
 
     private func save() {
         do {

@@ -80,7 +80,11 @@ public struct SSHConfig: Sendable {
             for (keyword, value) in block.directives {
                 switch keyword {
                 case "hostname" where !hostNameSet:
+                    // %h is the name as given (`HostName %h.example.com`); %% a literal percent.
                     host.hostName = value
+                        .replacingOccurrences(of: "%%", with: "\u{0}")
+                        .replacingOccurrences(of: "%h", with: name)
+                        .replacingOccurrences(of: "\u{0}", with: "%")
                     hostNameSet = true
                 case "user" where host.user == nil:
                     host.user = value

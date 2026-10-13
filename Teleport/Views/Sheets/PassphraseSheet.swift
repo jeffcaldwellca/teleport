@@ -51,6 +51,10 @@ struct PassphraseSheet: View {
         }
         .padding(24)
         .frame(width: 420)
+        // Turned down in place (wrong passphrase): clear the field for another go.
+        .onChange(of: request.isRetry) { _, isRetry in
+            if isRetry { passphrase = "" }
+        }
     }
 
     private func unlock() {
