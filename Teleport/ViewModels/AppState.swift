@@ -20,8 +20,18 @@ final class AppState {
     /// remote pane land. Kept in sync by `ContentView`.
     var localPanePath: String = FileManager.default.homeDirectoryForCurrentUser.path
 
-    // Currently-open remote session (nil when not connected)
-    var activeSession: RemoteSession? = nil
+    // MARK: Sessions
+
+    /// Every open remote session, in tab order.
+    private(set) var sessions: [RemoteSession] = []
+    private(set) var activeSessionID: RemoteSession.ID?
+
+    /// The session on screen in the remote pane (nil when none is open).
+    var activeSession: RemoteSession? {
+        sessions.first { $0.id == activeSessionID }
+    }
+
+    private let clientFactory: (Connection, String) -> RemoteClient
 
     // Sidebar / sheet state
     var selectedConnectionID: Connection.ID? = nil
@@ -38,10 +48,120 @@ final class AppState {
     var alertMessage = ""
     var showingAlert = false
 
-    init() {
-        let store = ConnectionStore()
+    /// - Parameter clientFactory: builds the client for each browsing
+    ///   session; tests substitute a scripted one.
+    init(
+        connectionStore store: ConnectionStore = ConnectionStore(),
+        clientFactory: @escaping (Connection, String) -> RemoteClient = RemoteClientFactory.make(for:password:)
+    ) {
         connectionStore = store
+        self.clientFactory = clientFactory
         transferQueue = TransferQueueViewModel(passwordProvider: { store.password(for: $0) })
+    }
+
+    // MARK: Opening sessions
+
+    /// "Take me to this server": switch to its session if it has one,
+    /// otherwise open one alongside whatever else is connected.
+    func openSession(for connection: Connection) async {
+        if let existing = sessions(for: connection).first {
+            activate(existing.id)
+            selectedConnectionID = connection.id
+            return
+        }
+        await openNewSession(for: connection)
+    }
+
+    /// Always opens another session, even to a server that already has one
+    /// — for two locations on the same server side by side.
+    func openNewSession(for connection: Connection) async {
+        let previouslyActive = activeSessionID
+        let client = clientFactory(connection, connectionStore.password(for: connection))
+        let session = RemoteSession(connection: connection, client: client)
+        sessions.append(session)
+        activeSessionID = session.id
+        selectedConnectionID = connection.id   // reflect what we're connecting to
+        focusedPane = .remote                   // make the just-opened pane the command target
+
+        await session.connect()
+
+        // Closed while it was still connecting: it's gone, and whatever the
+        // attempt came to is nobody's business any more.
+        guard sessions.contains(where: { $0.id == session.id }) else {
+            await session.disconnect()
+            return
+        }
+        guard let error = session.connectionError else { return }
+
+        showError(title: "Connection Failed", message: error)
+        sessions.removeAll { $0.id == session.id }
+        // Only hand focus back if the failed tab is the one the user was
+        // still looking at; if they've moved on, leave them where they are.
+        if activeSessionID == session.id {
+            let fallback = sessions.first { $0.id == previouslyActive } ?? sessions.last
+            setActive(fallback?.id)
+        }
+    }
+
+    // MARK: Switching
+
+    func activate(_ id: RemoteSession.ID) {
+        guard sessions.contains(where: { $0.id == id }) else { return }
+        setActive(id)
+    }
+
+    func activateNextSession() { step(by: 1) }
+    func activatePreviousSession() { step(by: -1) }
+
+    private func step(by offset: Int) {
+        guard sessions.count > 1,
+              let index = sessions.firstIndex(where: { $0.id == activeSessionID }) else { return }
+        setActive(sessions[(index + offset + sessions.count) % sessions.count].id)
+    }
+
+    private func setActive(_ id: RemoteSession.ID?) {
+        activeSessionID = id
+        focusedPane = id == nil ? .local : .remote
+        if let session = activeSession { selectedConnectionID = session.connection.id }
+    }
+
+    // MARK: Closing
+
+    /// Disconnect and remove a session. If it was the one on screen, its
+    /// right-hand neighbour takes over, else the left.
+    func closeSession(_ id: RemoteSession.ID) async {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let session = sessions.remove(at: index)
+        if activeSessionID == id {
+            // After the removal the right-hand neighbour sits at `index`.
+            let neighbour = index < sessions.count ? sessions[index] : sessions.last
+            setActive(neighbour?.id)
+        }
+        // Leave selectedConnectionID intact so the favorite stays highlighted
+        // and can be reconnected without first selecting a different row.
+        await session.disconnect()
+    }
+
+    /// Close the session on screen.
+    func disconnect() async {
+        guard let id = activeSessionID else { return }
+        await closeSession(id)
+    }
+
+    // MARK: Describing
+
+    func sessions(for connection: Connection) -> [RemoteSession] {
+        sessions.filter { $0.connection.id == connection.id }
+    }
+
+    /// Tab title: the favourite's name, numbered from the second session to
+    /// the same favourite on ("web", "web (2)").
+    func title(for session: RemoteSession) -> String {
+        let siblings = sessions(for: session.connection)
+        guard let position = siblings.firstIndex(where: { $0.id == session.id }), position > 0 else {
+            return session.connection.displayTitle
+        }
+        return "\(session.connection.displayTitle) (\(position + 1))"
     }
 
     func showError(_ error: Error) {

@@ -191,35 +191,6 @@ struct ConnectionRowView: View {
 // MARK: - AppState connection helpers
 
 extension AppState {
-    func openSession(for connection: Connection) async {
-        // Disconnect existing session
-        if let existing = activeSession {
-            await existing.disconnect()
-        }
-
-        let pw     = connectionStore.password(for: connection)
-        let client = RemoteClientFactory.make(for: connection, password: pw)
-        let session = RemoteSession(connection: connection, client: client)
-        activeSession = session
-        selectedConnectionID = connection.id   // reflect what we're connecting to
-        focusedPane = .remote                   // make the just-opened pane the command target
-        await session.connect()
-
-        if let err = session.connectionError {
-            showError(title: "Connection Failed", message: err)
-            activeSession = nil
-            focusedPane = .local
-        }
-    }
-
-    func disconnect() async {
-        await activeSession?.disconnect()
-        activeSession = nil
-        focusedPane = .local
-        // Leave selectedConnectionID intact so the favorite stays highlighted
-        // and can be reconnected without first selecting a different row.
-    }
-
     func duplicate(_ conn: Connection) {
         var copy       = conn
         copy.id        = UUID()
@@ -235,10 +206,12 @@ extension AppState {
     }
 
     /// Delete a connection plus its keychain password (via the store) and its
-    /// SSH-key bookmark, so nothing is orphaned.
+    /// SSH-key bookmark, so nothing is orphaned. Any sessions open to it are
+    /// closed.
     func delete(_ conn: Connection) {
-        if activeSession?.connection.id == conn.id {
-            Task { await disconnect() }
+        let open = sessions(for: conn).map(\.id)
+        if !open.isEmpty {
+            Task { for id in open { await closeSession(id) } }
         }
         connectionStore.delete(conn)
         try? BookmarkStore.shared.remove(name: BookmarkStore.sshKeyName(for: conn.id))
