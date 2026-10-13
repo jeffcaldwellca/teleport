@@ -195,7 +195,8 @@ public enum SSHKeyFingerprint {
         return "SHA256:" + bytes.base64EncodedString().replacingOccurrences(of: "=", with: "")
     }
 
-    /// Friendlier display: groups of two hex digits separated by colons.
+    /// Colon-separated hex pairs — the convention for TLS certificate
+    /// fingerprints (`openssl x509 -fingerprint`). SSH keys use `openSSH(_:)`.
     public static func display(_ fingerprint: String) -> String {
         guard fingerprint.hasPrefix("SHA256:") else { return fingerprint }
         let hex = String(fingerprint.dropFirst("SHA256:".count))
@@ -266,6 +267,6 @@ public struct HostKeyMismatchError: LocalizedError {
     public let actual: String
 
     public var errorDescription: String? {
-        "SSH host key changed — possible MITM attack. Expected \(SSHKeyFingerprint.display(expected)), got \(SSHKeyFingerprint.display(actual))."
+        "SSH host key changed — possible MITM attack. Expected \(SSHKeyFingerprint.openSSH(expected)), got \(SSHKeyFingerprint.openSSH(actual))."
     }
 }

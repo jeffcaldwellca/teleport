@@ -159,7 +159,10 @@ final class BrowserViewModel {
         do {
             let raw: [FileItem]
             if isLocal {
-                raw = try LocalFileService.shared.listDirectory(at: URL(fileURLWithPath: path))
+                // Off the main actor: a folder with thousands of entries (or
+                // a slow volume) would otherwise freeze the window.
+                let url = URL(fileURLWithPath: path)
+                raw = try await Task.detached { try LocalFileService.listDirectory(at: url) }.value
             } else {
                 guard let client else { throw RemoteClientError.notConnected }
                 raw = try await remoteListing(client, at: path)
@@ -269,7 +272,7 @@ final class BrowserViewModel {
         guard let safeName = RemotePath.sanitizedFilename(name) else {
             throw RemotePathError.unsafeName(name)
         }
-        let newPath = "\(currentPath)/\(safeName)"
+        let newPath = RemotePath.join(currentPath, safeName)
         if isLocal {
             try LocalFileService.shared.createDirectory(at: URL(fileURLWithPath: newPath))
         } else {
@@ -310,7 +313,7 @@ final class BrowserViewModel {
         guard let safeName = RemotePath.sanitizedFilename(newName) else {
             throw RemotePathError.unsafeName(newName)
         }
-        let newPath = (item.path as NSString).deletingLastPathComponent + "/" + safeName
+        let newPath = RemotePath.join((item.path as NSString).deletingLastPathComponent, safeName)
         if isLocal {
             try LocalFileService.shared.rename(
                 from: URL(fileURLWithPath: item.path),

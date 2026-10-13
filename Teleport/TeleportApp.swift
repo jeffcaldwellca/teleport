@@ -3,13 +3,19 @@ import TeleportKit
 
 @main
 struct TeleportApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appState = AppState()
+
+    init() {
+        TemporaryFiles.sweepStale()
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(appState)
                 .frame(minWidth: 900, minHeight: 560)
+                .onAppear { appDelegate.transferQueue = appState.transferQueue }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -21,6 +27,25 @@ struct TeleportApp: App {
             SettingsView()
                 .environment(appState)
         }
+    }
+}
+
+// MARK: - App Delegate
+
+/// Quitting discards the transfer queue, so ask first while it has work in it.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var transferQueue: TransferQueueViewModel?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let queue = transferQueue, queue.hasUnfinishedTransfers else { return .terminateNow }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Transfers are still in progress"
+        alert.informativeText = "Quitting now stops them. Unfinished downloads keep their partial files, but the queue isn't restored when Teleport reopens."
+        alert.addButton(withTitle: "Quit Anyway")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 }
 
@@ -58,6 +83,11 @@ struct TeleportCommands: Commands {
             }
             .keyboardShortcut(.rightArrow, modifiers: .command)
 
+            Button("Go to Folder…") {
+                NotificationCenter.default.post(name: .browserGoToFolder, object: nil)
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+
             Divider()
 
             Button("Switch Pane") {
@@ -86,6 +116,7 @@ extension Notification.Name {
     static let browserGoUp         = Notification.Name("com.teleport.browser.up")
     static let browserGoBack       = Notification.Name("com.teleport.browser.back")
     static let browserGoForward    = Notification.Name("com.teleport.browser.forward")
+    static let browserGoToFolder   = Notification.Name("com.teleport.browser.goToFolder")
     static let browserToggleHidden = Notification.Name("com.teleport.browser.toggleHidden")
     static let toggleTransferQueue = Notification.Name("com.teleport.queue.toggle")
     static let switchPane          = Notification.Name("com.teleport.switchPane")

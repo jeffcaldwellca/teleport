@@ -83,6 +83,25 @@ final class PreferencesTests: XCTestCase {
         XCTAssertTrue(zip(padding, padding.dropFirst()).allSatisfy { $0 <= $1 }, "row padding: \(padding)")
     }
 
+    // MARK: - Settings controls
+
+    /// The Settings stepper prints the value in its label; without
+    /// observation the label kept showing the old number.
+    @MainActor
+    func test_maxConcurrentTransfers_changesAreObservable_soTheSettingsLabelUpdates() {
+        let saved = Preferences.shared.maxConcurrentTransfers
+        defer { Preferences.shared.maxConcurrentTransfers = saved }
+
+        let fired = expectation(description: "observation onChange fired")
+        withObservationTracking {
+            _ = Preferences.shared.maxConcurrentTransfers
+        } onChange: {
+            fired.fulfill()
+        }
+        Preferences.shared.maxConcurrentTransfers = saved == 5 ? 4 : 5
+        wait(for: [fired], timeout: 1)
+    }
+
     // MARK: - downloadDestination
 
     @MainActor

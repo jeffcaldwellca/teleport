@@ -12,6 +12,7 @@ struct BrowserPaneView: View {
 
     @Environment(AppState.self) private var appState
     @State private var showingNewFolder = false
+    @State private var showingGoToFolder = false
     @State private var autoRefreshTask: Task<Void, Never>?
 
     /// This pane is the target for keyboard commands (refresh, navigate, …).
@@ -79,6 +80,13 @@ struct BrowserPaneView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingGoToFolder) {
+            GoToFolderSheet(initialPath: vm.currentPath) { path in goToFolder(path) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .browserGoToFolder)) { _ in
+            guard isActive else { return }
+            showingGoToFolder = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .browserRefresh)) { _ in
             guard isActive else { return }
             Task { await vm.refresh() }
@@ -104,6 +112,24 @@ struct BrowserPaneView: View {
             let direction = note.userInfo?["direction"] as? String
             let relevant = vm.isLocal ? direction == "download" : direction == "upload"
             if relevant { scheduleAutoRefresh() }
+        }
+    }
+
+    /// Jump straight to a typed path — the only way into a folder whose
+    /// parents can't be listed, and quicker than clicking down a deep tree.
+    private func goToFolder(_ typed: String) {
+        var path = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if vm.isLocal { path = (path as NSString).expandingTildeInPath }
+        if path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        guard !path.isEmpty, path != vm.currentPath else { return }
+        Task {
+            await vm.navigate(to: path)
+            // A typo shouldn't strand the pane on an error screen: say what
+            // went wrong and stay where we were.
+            if let message = vm.loadError {
+                appState.showError(title: "Can\u{2019}t Open Folder", message: message)
+                await vm.refresh()
+            }
         }
     }
 
@@ -197,6 +223,11 @@ struct BrowserPaneView: View {
                 Divider()
                 Toggle("Show Hidden Files", isOn: $vm.showHidden)
                 Divider()
+                Button {
+                    showingGoToFolder = true
+                } label: {
+                    Label("Go to Folder…", systemImage: "arrow.turn.down.right")
+                }
                 Button {
                     showingNewFolder = true
                 } label: {
@@ -314,6 +345,50 @@ struct NewFolderSheet: View {
     }
 }
 
+// MARK: - GoToFolderSheet
+
+struct GoToFolderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var path: String
+    let onGo: (String) -> Void
+
+    init(initialPath: String, onGo: @escaping (String) -> Void) {
+        _path = State(initialValue: initialPath)
+        self.onGo = onGo
+    }
+
+    private var trimmed: String { path.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Go to Folder").font(.headline)
+
+            TextField("/path/to/folder", text: $path)
+                .textFieldStyle(.roundedBorder)
+                .font(.body.monospaced())
+                .onSubmit(go)
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Go", action: go)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmed.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func go() {
+        guard !trimmed.isEmpty else { return }
+        onGo(trimmed)
+        dismiss()
+    }
+}
+
 // MARK: - FileListView
 
 struct FileListView: View {
@@ -332,6 +407,20 @@ struct FileListView: View {
     @State private var dropFolderFrame: CGRect? = nil
     @State private var tableHandle = TableHandle()
     @FocusState private var listFocused: Bool
+
+    /// Which columns are shown, their order and widths — changed from the
+    /// column header's context menu and remembered per pane.
+    @AppStorage private var columnCustomization: TableColumnCustomization<FileItem>
+
+    init(vm: BrowserViewModel, side: AppState.FocusedPane, remoteSession: RemoteSession?) {
+        self.vm = vm
+        self.side = side
+        self.remoteSession = remoteSession
+        _columnCustomization = AppStorage(
+            wrappedValue: TableColumnCustomization<FileItem>(),
+            "browser.columns.\(side == .local ? "local" : "remote")"
+        )
+    }
 
     /// Both panes take local file URLs and the internal remote-item payload;
     /// `dropOperation` decides per drag what (if anything) a drop would do.
@@ -366,21 +455,25 @@ struct FileListView: View {
     }
 
     var body: some View {
-        Table(of: FileItem.self, selection: $vm.selectedItems, sortOrder: sortOrder) {
+        Table(of: FileItem.self, selection: $vm.selectedItems, sortOrder: sortOrder,
+              columnCustomization: $columnCustomization) {
             TableColumn("Name", sortUsing: KeyPathComparator(\FileItem.name)) { item in
                 // AppState goes in explicitly — a Table cell is hosted on its own
                 // and can't rely on inheriting the environment. See FileNameCell.
                 FileNameCell(item: item, vm: vm, appState: appState, textSize: textSize)
             }
             .width(min: 180, ideal: 340)
+            .customizationID("name")
+            .disabledCustomizationBehavior(.visibility)
 
             TableColumn("Date Modified", sortUsing: KeyPathComparator(\FileItem.modifiedDate)) { item in
-                Text(item.modifiedDate.map { $0.formatted(.relative(presentation: .named)) } ?? "—")
+                Text(item.modifiedDate.map(FileListDate.string(for:)) ?? "—")
                     .font(.system(size: textSize.pointSize))
                     .foregroundStyle(item.modifiedDate == nil ? .tertiary : .secondary)
                     .lineLimit(1)
             }
-            .width(min: 110, ideal: 150)
+            .width(min: 110, ideal: 170)
+            .customizationID("date")
 
             TableColumn("Size", sortUsing: KeyPathComparator(\FileItem.size)) { item in
                 Text(item.isDirectory ? "—" : item.displaySize)
@@ -389,6 +482,28 @@ struct FileListView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 70, ideal: 96)
+            .customizationID("size")
+
+            // Off by default; switched on from the column header's menu.
+            TableColumn("Permissions", sortUsing: KeyPathComparator(\FileItem.permissions)) { item in
+                Text(item.displayPermissions ?? "—")
+                    .font(.system(size: textSize.pointSize, design: .monospaced))
+                    .foregroundStyle(item.displayPermissions == nil ? .tertiary : .secondary)
+                    .lineLimit(1)
+            }
+            .width(min: 84, ideal: 96)
+            .customizationID("permissions")
+            .defaultVisibility(.hidden)
+
+            TableColumn("Owner", sortUsing: KeyPathComparator(\FileItem.owner)) { item in
+                Text(Self.ownerText(for: item) ?? "—")
+                    .font(.system(size: textSize.pointSize))
+                    .foregroundStyle(item.owner == nil ? .tertiary : .secondary)
+                    .lineLimit(1)
+            }
+            .width(min: 70, ideal: 110)
+            .customizationID("owner")
+            .defaultVisibility(.hidden)
         } rows: {
             ForEach(vm.displayedItems) { item in
                 // Drag lives on the row, not the cell, so the framework can tell
@@ -521,6 +636,17 @@ struct FileListView: View {
         }
     }
 
+    /// "owner:group" as the server reported them (names over FTP, numeric IDs
+    /// over SFTP).
+    private static func ownerText(for item: FileItem) -> String? {
+        switch (item.owner, item.group) {
+        case (let owner?, let group?): return "\(owner):\(group)"
+        case (let owner?, nil):        return owner
+        case (nil, let group?):        return ":\(group)"
+        case (nil, nil):               return nil
+        }
+    }
+
     /// Hovering a folder row outlines that row; anywhere else in the pane
     /// outlines the whole list (the drop lands in the current directory).
     @ViewBuilder
@@ -560,6 +686,10 @@ struct FileListView: View {
     @ViewBuilder
     private func multiContextMenu(for items: [FileItem]) -> some View {
         if vm.isLocal {
+            if let session = appState.activeSession {
+                Button("Upload \(items.count) Items") { uploadToRemotePane(items, session: session) }
+                    .help("Upload to \(session.browser.currentPath) on \(session.connection.displayTitle)")
+            }
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting(items.map { URL(fileURLWithPath: $0.path) })
             }
@@ -604,6 +734,11 @@ struct FileListView: View {
 
         Divider()
 
+        if vm.isLocal, let session = appState.activeSession {
+            Button("Upload") { uploadToRemotePane([item], session: session) }
+                .help("Upload to \(session.browser.currentPath) on \(session.connection.displayTitle)")
+            Divider()
+        }
         if !vm.isLocal, let session = remoteSession {
             Button("Upload Here…") { uploadToRemote(session: session) }
             Divider()
@@ -832,6 +967,12 @@ struct FileListView: View {
                 }
             }
         }
+    }
+
+    /// Local items → the folder the remote pane is showing.
+    private func uploadToRemotePane(_ items: [FileItem], session: RemoteSession) {
+        uploadLocalURLs(items.map { URL(fileURLWithPath: $0.path) },
+                        toRemoteParent: session.browser.currentPath)
     }
 
     // MARK: Move / Copy / Duplicate
@@ -1097,7 +1238,9 @@ struct FileListView: View {
     /// Upload local files/folders into `remoteParent` through the transfer
     /// queue. Folders are uploaded recursively.
     private func uploadLocalURLs(_ urls: [URL], toRemoteParent remoteParent: String) {
-        guard let session = remoteSession else { return }
+        // The active session rather than this pane's own: the local pane has
+        // none, and uploads from it go to the connected server all the same.
+        guard let session = appState.activeSession else { return }
         for url in urls {
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)

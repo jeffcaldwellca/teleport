@@ -6,15 +6,14 @@ struct ContentView: View {
 
     @State private var localBrowser  = BrowserViewModel(localPath: ContentView.initialLocalPath())
 
-    /// Under App Sandbox, `homeDirectoryForCurrentUser` returns the container
-    /// (which is empty), so default to Downloads — covered by our entitlement.
-    /// The user can change this from Settings; bookmarks persist the choice.
+    /// The folder chosen in Settings, or the home folder. (The app used to be
+    /// sandboxed, where "home" was an empty container, so it opened in
+    /// Downloads instead.)
     private static func initialLocalPath() -> String {
         if let bookmarked = try? BookmarkStore.shared.resolve(name: BookmarkStore.localRootName) {
             return bookmarked.path
         }
-        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
-            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        return FileManager.default.homeDirectoryForCurrentUser.path
     }
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
@@ -62,6 +61,7 @@ struct ContentView: View {
                 }
             }
         }
+        .background(DockBadgeUpdater(queue: appState.transferQueue))
         .navigationSplitViewStyle(.balanced)
         .toolbar { MainToolbarContent() }
         .alert(appState.alertTitle, isPresented: $state.showingAlert) {
@@ -121,9 +121,26 @@ struct ContentView: View {
                     conflictBehavior: .overwrite
                 ) != nil
             }
+            appState.transferQueue.onIdle = { TransferActivityNotifier.queueDidFinish($0) }
             // Seed local browser
             await localBrowser.refresh()
         }
+    }
+}
+
+// MARK: - Dock Badge
+
+/// Mirrors the number of transfers still to go onto the Dock icon. A view of
+/// its own so that only this — not the whole window — re-evaluates every time
+/// a transfer changes state.
+private struct DockBadgeUpdater: View {
+    let queue: TransferQueueViewModel
+
+    var body: some View {
+        Color.clear
+            .onChange(of: queue.remainingCount, initial: true) { _, remaining in
+                TransferActivityNotifier.updateDockBadge(remaining: remaining)
+            }
     }
 }
 
@@ -239,7 +256,7 @@ struct SettingsView: View {
                     Spacer()
                     Button("Choose…") { chooseLocalRoot() }
                 }
-                Text("The local pane opens in this folder by default. Saved as a security-scoped bookmark.")
+                Text("The local pane opens in this folder. Defaults to your home folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -327,6 +344,7 @@ struct SettingsView: View {
                 hosts: trustedHosts,
                 store: .shared,
                 defaultPort: 22,
+                format: SSHKeyFingerprint.openSSH,
                 emptyText: "No host keys trusted yet. The first time you connect to an SSH server, you'll be asked to verify its fingerprint.",
                 footer: "Forgetting a key makes the next connection re-prompt to confirm the server's fingerprint — useful after a legitimate server-key change, or to revoke trust."
             )
@@ -335,6 +353,7 @@ struct SettingsView: View {
                 hosts: trustedCertificates,
                 store: .tlsCertificates,
                 defaultPort: 21,
+                format: SSHKeyFingerprint.display,
                 emptyText: "No certificates trusted yet. You're only asked about certificates macOS doesn't already trust, such as self-signed ones.",
                 footer: "Forgetting a certificate makes the next connection re-prompt — useful after the server's certificate is renewed, or to revoke trust."
             )
@@ -349,6 +368,7 @@ struct SettingsView: View {
         hosts: [SSHHostKeyStore.TrustedHost],
         store: SSHHostKeyStore,
         defaultPort: Int,
+        format: @escaping (String) -> String,
         emptyText: String,
         footer: String
     ) -> some View {
@@ -363,7 +383,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(host.port == defaultPort ? host.host : "\(host.host):\(host.port)")
                                 .font(.callout)
-                            Text(SSHKeyFingerprint.display(host.fingerprint))
+                            Text(format(host.fingerprint))
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -425,8 +445,7 @@ struct SettingsView: View {
         if let url = try? BookmarkStore.shared.resolve(name: BookmarkStore.localRootName) {
             return url.path
         }
-        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
-            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        return FileManager.default.homeDirectoryForCurrentUser.path
     }
 }
 
