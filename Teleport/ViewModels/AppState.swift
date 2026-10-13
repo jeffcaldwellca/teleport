@@ -16,6 +16,10 @@ final class AppState {
     enum FocusedPane { case local, remote }
     var focusedPane: FocusedPane = .local
 
+    /// Folder the local pane is showing — where downloads started from the
+    /// remote pane land. Kept in sync by `ContentView`.
+    var localPanePath: String = FileManager.default.homeDirectoryForCurrentUser.path
+
     // Currently-open remote session (nil when not connected)
     var activeSession: RemoteSession? = nil
 

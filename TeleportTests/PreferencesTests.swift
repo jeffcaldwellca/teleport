@@ -82,4 +82,28 @@ final class PreferencesTests: XCTestCase {
         XCTAssertTrue(zip(icons, icons.dropFirst()).allSatisfy { $0 < $1 }, "icon sizes: \(icons)")
         XCTAssertTrue(zip(padding, padding.dropFirst()).allSatisfy { $0 <= $1 }, "row padding: \(padding)")
     }
+
+    // MARK: - downloadDestination
+
+    @MainActor
+    func test_downloadDestination_defaultsToTheLocalPane_includingForLegacyStoredValues() {
+        let key = "pref.downloadDestination"
+        let saved = UserDefaults.standard.string(forKey: key)
+        defer {
+            if let saved { UserDefaults.standard.set(saved, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+
+        UserDefaults.standard.removeObject(forKey: key)
+        XCTAssertEqual(Preferences.shared.downloadDestination, .localPane)
+
+        // Older builds offered "Downloads" (and, before that, "Desktop").
+        for legacy in ["downloads", "desktop"] {
+            UserDefaults.standard.set(legacy, forKey: key)
+            XCTAssertEqual(Preferences.shared.downloadDestination, .localPane)
+        }
+
+        UserDefaults.standard.set("ask", forKey: key)
+        XCTAssertEqual(Preferences.shared.downloadDestination, .ask)
+    }
 }

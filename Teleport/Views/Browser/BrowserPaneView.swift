@@ -682,8 +682,8 @@ struct FileListView: View {
 
         let baseDir: URL
         switch Preferences.shared.downloadDestination {
-        case .downloads:
-            baseDir = LocalFileService.shared.downloadsDirectory()
+        case .localPane:
+            baseDir = URL(fileURLWithPath: appState.localPanePath)
         case .ask:
             let panel = NSSavePanel()
             panel.nameFieldStringValue = safeName
@@ -717,8 +717,8 @@ struct FileListView: View {
     /// preference is "Ask each time".
     private func downloadDestinationDirectory() -> URL? {
         switch Preferences.shared.downloadDestination {
-        case .downloads:
-            return LocalFileService.shared.downloadsDirectory()
+        case .localPane:
+            return URL(fileURLWithPath: appState.localPanePath)
         case .ask:
             let panel = NSOpenPanel()
             panel.canChooseFiles          = false
