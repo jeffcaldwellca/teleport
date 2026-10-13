@@ -85,6 +85,29 @@ final class AppState {
         }
     }
 
+    // MARK: Sync
+
+    /// The Sync Folders sheet, when it is open.
+    var syncModel: SyncViewModel?
+
+    /// Open Sync Folders for the folders the two panes are showing.
+    func beginSync() {
+        guard let session = activeSession else { return }
+        let model = SyncViewModel(
+            connection: session.connection,
+            localRoot: URL(fileURLWithPath: localPanePath),
+            remoteRoot: session.browser.currentPath,
+            queue: transferQueue
+        )
+        // Folders created and files deleted don't pass through the queue, so
+        // nothing else would tell the panes to look again.
+        model.onApplied = { [weak session] in
+            session?.scheduleRefresh()
+            NotificationCenter.default.post(name: .localFilesChanged, object: nil)
+        }
+        syncModel = model
+    }
+
     // MARK: Opening sessions
 
     /// "Take me to this server": switch to its session if it has one,

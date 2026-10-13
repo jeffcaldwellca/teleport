@@ -147,13 +147,15 @@ final class TransferQueueViewModel {
         return task
     }
 
-    /// `enqueue` for a whole folder's worth of files. Checks for duplicates
+    /// `enqueue` for a whole folder's worth of files (folder transfers, sync).
+    /// `conflictBehavior` applies to every one of them. Checks for duplicates
     /// against one precomputed set instead of rescanning the queue per file,
     /// which is quadratic and stalls the UI for thousands of items.
-    private func enqueueBatch(
+    func enqueueBatch(
         connection: Connection,
         direction: TransferDirection,
-        items: [(local: URL, remote: String)]
+        items: [(local: URL, remote: String)],
+        conflictBehavior: ConflictResolution? = nil
     ) {
         guard !items.isEmpty else { return }
         if !tasks.contains(where: { !$0.status.isFinal }) {
@@ -166,10 +168,12 @@ final class TransferQueueViewModel {
                 .map { key($0.effectiveLocalURL, $0.effectiveRemotePath) }
         )
         for item in items where pending.insert(key(item.local, item.remote)).inserted {
-            tasks.append(TransferTask(
+            let task = TransferTask(
                 connection: connection, direction: direction,
                 localURL: item.local, remotePath: item.remote
-            ))
+            )
+            task.conflictBehavior = conflictBehavior
+            tasks.append(task)
         }
         setVisible(true)
         startWorkers()

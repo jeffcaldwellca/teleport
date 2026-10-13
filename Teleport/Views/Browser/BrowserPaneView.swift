@@ -113,6 +113,9 @@ struct BrowserPaneView: View {
             // that session is the one on screen.
             if vm.isLocal, note.userInfo?["direction"] as? String == "download" { scheduleAutoRefresh() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .localFilesChanged)) { _ in
+            if vm.isLocal { scheduleAutoRefresh() }
+        }
         .onDisappear { autoRefreshTask?.cancel() }
     }
 
@@ -228,6 +231,13 @@ struct BrowserPaneView: View {
                     showingGoToFolder = true
                 } label: {
                     Label("Go to Folder…", systemImage: "arrow.turn.down.right")
+                }
+                if !vm.isLocal {
+                    Button {
+                        appState.beginSync()
+                    } label: {
+                        Label("Sync with Local Folder…", systemImage: "arrow.triangle.2.circlepath")
+                    }
                 }
                 Button {
                     showingNewFolder = true
