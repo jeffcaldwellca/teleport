@@ -11,6 +11,14 @@ It is vendored so that `TeleportKit` can carry the patch below; nothing else
 is changed. To upgrade, replace `Sources/`, `Package.swift`, `LICENSE` and
 `README.md` with the new release and re-apply the patch.
 
+## Upstream
+
+The wrapper fix is proposed upstream as
+[orlandos-nl/Citadel#143](https://github.com/orlandos-nl/Citadel/pull/143) and the
+two SFTP bounds as [#144](https://github.com/orlandos-nl/Citadel/pull/144). The
+partial-success forwarding and the keyboard-interactive offer depend on the
+swift-nio-ssh changes and follow once those land.
+
 ## Patches
 
 ### `Sources/Citadel/SSHAuthenticationMethod.swift` — consult a custom delegate on every round
