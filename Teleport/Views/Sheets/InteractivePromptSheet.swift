@@ -14,8 +14,10 @@ struct InteractivePromptSheet: View {
         _answers = State(initialValue: Array(repeating: "", count: request.challenge.prompts.count))
     }
 
-    private var title: String {
-        request.challenge.name.isEmpty ? "\u{201C}\(request.connectionName)\u{201D} asks for more to log in" : request.challenge.name
+    /// The server's own words, shown as such — never as the sheet's title,
+    /// which it could otherwise write to look like something else.
+    private var serverText: String {
+        [request.challenge.name, request.challenge.instruction].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     var body: some View {
@@ -25,14 +27,26 @@ struct InteractivePromptSheet: View {
                     .font(.system(size: 28))
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    Text("\u{201C}\(request.connectionName)\u{201D} asks for more to log in")
                         .font(.headline)
-                    Text(request.challenge.instruction.isEmpty
-                         ? "The server \u{201C}\(request.connectionName)\u{201D} needs another step to log you in."
-                         : request.challenge.instruction)
+                    Text("Answer the server\u{2019}s prompts to continue.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            if !serverText.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("From the server:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(serverText)
+                        .font(.callout)
+                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                 }
             }
 
