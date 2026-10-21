@@ -13,16 +13,41 @@ final class CLIIntegrationTests: XCTestCase {
         }
     }
 
-    private func tportBinaryURL() throws -> URL {
-        // Built by `swift build` in TeleportKit/ ahead of running this suite.
-        let url = URL(fileURLWithPath: #filePath)
+    /// `tport` built from this checkout, so the tests exercise the code as it
+    /// is now rather than whatever binary was left in `.build` (a stale one
+    /// once reported the previous version right after a bump). `swift build`
+    /// is incremental: a few seconds when nothing has changed. Built once per
+    /// test process.
+    private static let builtTport: Result<URL, Error> = {
+        let package = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // TeleportTests/
             .deletingLastPathComponent()  // repo root
-            .appending(path: "TeleportKit/.build/debug/tport")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw XCTSkip("Build tport first: cd TeleportKit && swift build")
+            .appending(path: "TeleportKit")
+        let build = Process()
+        build.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        build.arguments = ["swift", "build", "--product", "tport", "--package-path", package.path]
+        let output = Pipe()
+        build.standardOutput = output
+        build.standardError = output
+        do {
+            try build.run()
+            // Drain before waiting, or a chatty build fills the pipe and stalls.
+            let log = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            build.waitUntilExit()
+            guard build.terminationStatus == 0 else { return .failure(TportBuildFailed(log: log)) }
+            return .success(package.appending(path: ".build/debug/tport"))
+        } catch {
+            return .failure(error)
         }
-        return url
+    }()
+
+    private struct TportBuildFailed: Error, CustomStringConvertible {
+        let log: String
+        var description: String { "Building tport failed:\n" + log.suffix(3000) }
+    }
+
+    private func tportBinaryURL() throws -> URL {
+        try Self.builtTport.get()
     }
 
     /// - Parameter environment: variables to set for the child. The user's
