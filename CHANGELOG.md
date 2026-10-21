@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **SFTP logins refused by a server's policy now say why.** A server that
+  takes passwords only through keyboard-interactive (the usual setup on a
+  VPS), or that accepts a key but then demands a second step, used to produce
+  a bare "Authentication failed" that looked like a wrong password or key.
+  Teleport now reports what the server will still accept — for example that
+  it accepts SSH keys but not passwords, or that the key was accepted and the
+  server asks for keyboard-interactive, which Teleport doesn't support yet. A
+  plain wrong password or unauthorised key still reads "Authentication failed".
+- **Servers hardened to encrypt-then-MAC algorithms could not be reached.**
+  With `MACs` restricted to the `*-etm@openssh.com` names (as ssh-audit and
+  most hardening guides recommend) the key exchange failed before the host
+  key was seen, although both sides would have used AES-GCM and never touched
+  the MAC. Teleport now advertises OpenSSH's MAC names alongside its AES-GCM
+  ciphers.
+
+### Changed
+
+- Citadel, the SSH library, is now vendored under `TeleportKit/Vendor` with
+  one patch (its authentication wrapper answered every round after the first
+  itself, hiding the server's reply). See `TELEPORT-PATCHES.md` there.
+
 ## 1.1.0
 
 A large release: three new features, FTPS that works against common servers,
