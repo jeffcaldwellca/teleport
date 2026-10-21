@@ -78,13 +78,13 @@ final class SFTPClientLoginFailureTests: XCTestCase {
         XCTAssertTrue(why.contains("alice"), why)
     }
 
-    /// A server that lists only methods SwiftNIO SSH doesn't know (in
-    /// practice keyboard-interactive) reaches the client as an empty list.
-    func test_passwordOffered_serverWantsOnlyUnsupportedMethods_namesKeyboardInteractive() async throws {
+    /// A server that lists only methods SwiftNIO SSH doesn't implement
+    /// (host-based) reaches the client as an empty list.
+    func test_passwordOffered_serverWantsOnlyUnsupportedMethods_saysSo() async throws {
         let server = try start(accepts: [], reply: .reject)
         let why = await rejectionMessage(connecting: client(to: server, password: "secret"))
         XCTAssertTrue(why.localizedCaseInsensitiveContains("password"), why)
-        XCTAssertTrue(why.localizedCaseInsensitiveContains("keyboard-interactive"), why)
+        XCTAssertTrue(why.localizedCaseInsensitiveContains("doesn\u{2019}t support"), why)
     }
 
     func test_keyOffered_serverTakesPasswordsOnly_saysSo() async throws {
@@ -96,8 +96,8 @@ final class SFTPClientLoginFailureTests: XCTestCase {
         XCTAssertTrue(why.contains("alice"), why)
     }
 
-    /// OpenSSH's `AuthenticationMethods publickey,keyboard-interactive`: the
-    /// key is accepted, then a second step Teleport can't do is demanded.
+    /// A two-factor server whose second step is nothing Teleport can offer
+    /// (here: no method at all is left): the key was fine, say so.
     func test_keyAccepted_butSecondFactorRequired_explainsInsteadOfBlamingTheKey() async throws {
         let server = try start(accepts: [.publicKey], reply: .partialSuccess(remaining: []))
         let key = try makeKeyFile(named: "id_vps")

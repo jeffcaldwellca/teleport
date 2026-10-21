@@ -19,7 +19,7 @@ final class SFTPListingLimitTests: XCTestCase {
         }
     }
 
-    private struct ScriptedSFTP: SFTPDelegate {
+    struct ScriptedSFTP: SFTPDelegate {
         enum Behaviour {
             /// Every realpath answer differs from the question.
             case realPathNeverSettles
@@ -58,7 +58,7 @@ final class SFTPListingLimitTests: XCTestCase {
         func rename(oldPath: String, newPath: String, flags: UInt32, context: SSHContext) async throws -> SFTPStatusCode { throw SFTPError.invalidResponse }
     }
 
-    private static func component(_ name: String) -> SFTPPathComponent {
+    static func component(_ name: String) -> SFTPPathComponent {
         SFTPPathComponent(filename: name, longname: name, attributes: .none)
     }
 
