@@ -112,7 +112,9 @@ extension AcceptsUserAuthMessages {
     /// Teleport patch.
     mutating func receiveUserAuthInfoResponse(_ message: SSHMessage.UserAuthInfoResponseMessage) throws -> SSHConnectionStateMachine.StateMachineInboundProcessResult {
         if let future = try self.userAuthStateMachine.receiveUserAuthInfoResponse(message) {
-            return .possibleFutureMessage(future.map { Self.transform($0, connectionAttributes: nil, username: "") })
+            let connectionAttributes = self.connectionAttributes
+            let username = self.userAuthStateMachine.keyboardInteractiveUsername ?? ""
+            return .possibleFutureMessage(future.map { Self.transform($0, connectionAttributes: connectionAttributes, username: username) })
         }
         return .noMessage
     }

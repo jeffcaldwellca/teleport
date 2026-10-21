@@ -77,6 +77,21 @@ final class SFTPClientKeyboardInteractiveTests: XCTestCase {
         XCTAssertEqual(server.auth.responsesReceived, [["secret"]])
     }
 
+    /// The session a keyboard-interactive login opens must know who logged
+    /// in, like one opened by a password: the SFTP side acts on behalf of
+    /// the user.
+    func test_keyboardInteractiveLogin_tellsTheSessionWhoLoggedIn() async throws {
+        let server = try await start(.init(
+            accepts: [.keyboardInteractive],
+            keyboardInteractive: .init(challenge: Self.passwordPrompt, expected: ["secret"])
+        ))
+        let client = client(to: server, password: "secret")
+        try await client.connect()
+        _ = try await client.listDirectory(at: "/")
+        await client.disconnect()
+        XCTAssertEqual(server.usernames.values.first, "alice")
+    }
+
     func test_wrongPasswordThroughKeyboardInteractive_isAPlainAuthenticationFailure() async throws {
         let server = try await start(.init(
             accepts: [.publicKey, .keyboardInteractive],

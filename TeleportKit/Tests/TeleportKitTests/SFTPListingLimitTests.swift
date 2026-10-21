@@ -27,6 +27,8 @@ final class SFTPListingLimitTests: XCTestCase {
             case directoryEntries(Int)
         }
         let behaviour: Behaviour
+        /// The usernames the server attached to the sessions that asked.
+        var usernames: Recorder<String>? = nil
 
         struct Listing: SFTPDirectoryHandle {
             let count: Int
@@ -36,6 +38,7 @@ final class SFTPListingLimitTests: XCTestCase {
         }
 
         func realPath(for path: String, context: SSHContext) async throws -> [SFTPPathComponent] {
+            usernames?.append(context.username ?? "<none>")
             switch behaviour {
             case .realPathNeverSettles: return [component(path + "/again")]
             case .directoryEntries:     return [component(path)]

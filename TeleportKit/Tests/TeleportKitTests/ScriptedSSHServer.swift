@@ -70,6 +70,8 @@ final class ScriptedSSHServer {
 
     let port: Int
     let auth: Auth
+    /// The usernames the SFTP subsystem was given for each session.
+    let usernames = Recorder<String>()
     private let server: SSHServer
 
     init(auth: Auth) async throws {
@@ -84,7 +86,7 @@ final class ScriptedSSHServer {
             hostKeys: [NIOSSHPrivateKey(ed25519Key: .init())],
             authenticationDelegate: auth
         )
-        server.enableSFTP(withDelegate: SFTPListingLimitTests.ScriptedSFTP(behaviour: .directoryEntries(1)))
+        server.enableSFTP(withDelegate: SFTPListingLimitTests.ScriptedSFTP(behaviour: .directoryEntries(1), usernames: usernames))
     }
 
     func stop() async {
