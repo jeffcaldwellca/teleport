@@ -2,16 +2,27 @@
 
 ## Unreleased
 
+### New
+
+- **Keyboard-interactive SSH logins.** Servers that take passwords only
+  through keyboard-interactive (PAM — the usual setup on a VPS) now log in
+  with the configured password, with no extra prompt. Two-factor servers
+  (`AuthenticationMethods publickey,keyboard-interactive` or
+  `publickey,password`) work too: the key is accepted, then the second step
+  is sent on the same connection — the configured password, or whatever the
+  server asks for, shown in a sheet in the app and on the terminal in
+  `tport`. A key is still never followed by the password unless the server
+  asks for it as a second step. Fixes #4.
+
 ### Fixed
 
 - **SFTP logins refused by a server's policy now say why.** A server that
-  takes passwords only through keyboard-interactive (the usual setup on a
-  VPS), or that accepts a key but then demands a second step, used to produce
-  a bare "Authentication failed" that looked like a wrong password or key.
-  Teleport now reports what the server will still accept — for example that
-  it accepts SSH keys but not passwords, or that the key was accepted and the
-  server asks for keyboard-interactive, which Teleport doesn't support yet. A
-  plain wrong password or unauthorised key still reads "Authentication failed".
+  won't take the kind of credential offered used to produce a bare
+  "Authentication failed" that looked like a wrong password or key. Teleport
+  now reports what the server will still accept — for example that it
+  accepts SSH keys but not passwords, or that the key was accepted but a
+  second factor Teleport can't provide is required. A plain wrong password
+  or unauthorised key still reads "Authentication failed".
 - **Servers hardened to encrypt-then-MAC algorithms could not be reached.**
   With `MACs` restricted to the `*-etm@openssh.com` names (as ssh-audit and
   most hardening guides recommend) the key exchange failed before the host
@@ -21,13 +32,15 @@
 
 ### Changed
 
-- Citadel, the SSH library, is now vendored under `TeleportKit/Vendor` with
-  three small patches: its authentication wrapper answered every round after
-  the first itself, hiding the server's reply; its SFTP packet parser took
-  any declared length, so a hostile server could make Teleport buffer without
-  bound; and its directory listing followed the server's `realpath` and
-  `readdir` answers for as long as the server kept them coming. See
-  `TELEPORT-PATCHES.md` there.
+- The SSH libraries, Citadel and the swift-nio-ssh fork it builds on, are now
+  vendored under `TeleportKit/Vendor` so Teleport can patch them. swift-nio-ssh
+  gains keyboard-interactive and reports partial success to the client.
+  Citadel's authentication wrapper answered every round after the first
+  itself, hiding the server's reply; its SFTP packet parser took any declared
+  length, so a hostile server could make Teleport buffer without bound; and
+  its directory listing followed the server's `realpath` and `readdir`
+  answers for as long as the server kept them coming. See the
+  `TELEPORT-PATCHES.md` in each.
 
 ## 1.1.0
 

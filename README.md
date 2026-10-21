@@ -26,7 +26,7 @@ app that feels like one.
 
 ## Features
 
-- **FTP, FTPS, and SFTP** in one client, with SSH keys (ed25519, ECDSA, RSA; passphrases and ssh-agent supported) and host-key verification
+- **FTP, FTPS, and SFTP** in one client, with SSH keys (ed25519, ECDSA, RSA; passphrases and ssh-agent supported), keyboard-interactive and two-factor logins, and host-key verification
 - **Several servers at once** — each connection gets its own tab, and stays connected while you work in another
 - **`tport`**, a scriptable CLI, bundled with the app and installable from Settings
 - **Resume &amp; conflict handling** — interrupted transfers pick up where they left off, with overwrite/skip/if-newer policies
