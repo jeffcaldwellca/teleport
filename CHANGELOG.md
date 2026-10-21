@@ -22,8 +22,12 @@
 ### Changed
 
 - Citadel, the SSH library, is now vendored under `TeleportKit/Vendor` with
-  one patch (its authentication wrapper answered every round after the first
-  itself, hiding the server's reply). See `TELEPORT-PATCHES.md` there.
+  three small patches: its authentication wrapper answered every round after
+  the first itself, hiding the server's reply; its SFTP packet parser took
+  any declared length, so a hostile server could make Teleport buffer without
+  bound; and its directory listing followed the server's `realpath` and
+  `readdir` answers for as long as the server kept them coming. See
+  `TELEPORT-PATCHES.md` there.
 
 ## 1.1.0
 
