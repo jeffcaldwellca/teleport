@@ -83,14 +83,23 @@ public final class SSHAuthenticationMethod: NIOSSHClientUserAuthenticationDelega
         availableMethods: NIOSSHAvailableUserAuthenticationMethods,
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     ) {
+        nextAuthenticationType(availableMethods: availableMethods, partialSuccess: false, nextChallengePromise: nextChallengePromise)
+    }
+
+    public func nextAuthenticationType(
+        availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+        partialSuccess: Bool,
+        nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
+    ) {
         // Teleport patch: SwiftNIO SSH asks for the next offer after every
         // refusal, and a custom delegate is meant to drive that whole
-        // sequence itself — so hand it every call, not only the first.
-        // (Upstream consumes the single implementation on the first call and
-        // answers all later rounds with `allAuthenticationOptionsFailed`,
-        // hiding the server's list of still-acceptable methods.)
+        // sequence itself — so hand it every call (with the partial-success
+        // flag), not only the first. (Upstream consumes the single
+        // implementation on the first call and answers all later rounds
+        // with `allAuthenticationOptionsFailed`, hiding the server's list of
+        // still-acceptable methods.)
         if allImplementations.count == 1, case .custom(let implementation) = allImplementations[0] {
-            implementation.nextAuthenticationType(availableMethods: availableMethods, nextChallengePromise: nextChallengePromise)
+            implementation.nextAuthenticationType(availableMethods: availableMethods, partialSuccess: partialSuccess, nextChallengePromise: nextChallengePromise)
             return
         }
 
@@ -117,6 +126,12 @@ public final class SSHAuthenticationMethod: NIOSSHClientUserAuthenticationDelega
             case .privateKey:
                 guard availableMethods.contains(.publicKey) else {
                     nextChallengePromise.fail(SSHClientError.unsupportedPrivateKeyAuthentication)
+                    return
+                }
+            case .keyboardInteractive:
+                // Teleport patch.
+                guard availableMethods.contains(.keyboardInteractive) else {
+                    nextChallengePromise.fail(SSHClientError.allAuthenticationOptionsFailed)
                     return
                 }
             case .none:
