@@ -19,6 +19,7 @@ public actor SFTPClient: RemoteClient {
     private let keyReader: @Sendable (URL) async throws -> Data
     private let onUnknownHostKey: @Sendable (String, Int, String) async -> Bool
     private let passphraseProvider: @Sendable (String, Bool) async -> String?
+    private let interactivePromptProvider: InteractivePromptProvider
     private let agent: SSHAgent?
 
     private var ssh: SSHClient?
@@ -52,6 +53,10 @@ public actor SFTPClient: RemoteClient {
     ///   - passphraseProvider: asked for the passphrase of an encrypted key
     ///     file (key path, is-this-a-retry-after-a-wrong-one) → passphrase, or
     ///     nil to give up. Defaults to nil: encrypted keys fail closed.
+    ///   - interactivePromptProvider: asked to answer a keyboard-interactive
+    ///     challenge the password can't (a verification code, a custom PAM
+    ///     prompt): one answer per prompt, or nil to give up. Defaults to
+    ///     giving up. The GUI shows a sheet; `tport` asks on the terminal.
     ///   - agent: the ssh-agent to take keys from when the connection has
     ///     `useSSHAgent` on. Defaults to the one in `SSH_AUTH_SOCK`.
     public init(
@@ -61,9 +66,11 @@ public actor SFTPClient: RemoteClient {
         keyReader: @escaping @Sendable (URL) async throws -> Data = { url in try Data(contentsOf: url) },
         onUnknownHostKey: @escaping @Sendable (String, Int, String) async -> Bool = { _, _, _ in false },
         passphraseProvider: @escaping @Sendable (String, Bool) async -> String? = { _, _ in nil },
+        interactivePromptProvider: @escaping InteractivePromptProvider = { _ in nil },
         agent: SSHAgent? = .fromEnvironment
     ) {
         self.passphraseProvider = passphraseProvider
+        self.interactivePromptProvider = interactivePromptProvider
         self.agent = agent
         self.connection = connection
         self.password   = password
@@ -118,7 +125,7 @@ public actor SFTPClient: RemoteClient {
             case .keyFile:          offer = try await keyFileOffer()
             }
             let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-            let sequence = SSHAuthSequence(username: connection.username, offers: [offer])
+            let sequence = SSHAuthSequence(username: connection.username, primary: offer, followUps: followUps(after: offer))
             do {
                 connected = try await SSHClient.connect(
                     host: connection.host,
@@ -150,8 +157,9 @@ public actor SFTPClient: RemoteClient {
                 let failure = translateConnectFailure(error)
                 guard case RemoteClientError.authenticationFailed = failure else { throw failure }
                 if hasMore { continue }   // rejected: try the next credential
-                if let why = Self.explainRefusal(of: offer, user: connection.username,
-                                                 keyName: keyFileName,
+                if let why = Self.explainRefusal(of: sequence.lastOffer, user: connection.username,
+                                                 keyName: keyFileName, hasPassword: !password.isEmpty,
+                                                 primaryAccepted: sequence.primaryWasAccepted,
                                                  serverStillAccepts: sequence.methodsServerStillAccepts) {
                     throw RemoteClientError.authenticationRejected(why)
                 }
@@ -254,43 +262,111 @@ public actor SFTPClient: RemoteClient {
     /// server still takes that kind: then the credential itself was wrong,
     /// and a plain "Authentication failed" is the honest answer.
     ///
-    /// SwiftNIO SSH only knows public key, password and host-based, so a
-    /// server asking for keyboard-interactive (the usual way a VPS does
-    /// password logins, and the second step of most two-factor setups) shows
-    /// up as an empty list — and so does a key that was accepted but is only
-    /// the first of two required steps, since the two-factor flag is lost on
-    /// the way. Both mean the same to the user: finish the login elsewhere.
+    /// Follow-ups (the password as a second step, keyboard-interactive) have
+    /// already been offered by the time this is asked, so what's left to
+    /// explain is a server wanting something this connection can't give.
     static func explainRefusal(
         of offer: NIOSSHUserAuthenticationOffer.Offer,
         user: String,
         keyName: String,
+        hasPassword: Bool,
+        primaryAccepted: Bool,
         serverStillAccepts: NIOSSHAvailableUserAuthenticationMethods?
     ) -> String? {
         guard let accepts = serverStillAccepts else { return nil }
-        let unsupported = "an authentication method Teleport doesn\u{2019}t support yet (keyboard-interactive, or a " +
-                          "second factor). Other SSH clients that support it will log in."
+        let unsupported = "an authentication method Teleport doesn\u{2019}t support (such as host-based). " +
+                          "Other SSH clients that support it will log in."
 
         switch offer {
         case .password where !accepts.contains(.password):
             if accepts.contains(.publicKey) {
-                return "The server doesn\u{2019}t accept passwords for \(user); it accepts SSH keys. (If a password " +
-                       "works in other apps, the server uses keyboard-interactive login, which Teleport doesn\u{2019}t " +
-                       "support yet.)"
+                return "The server doesn\u{2019}t accept passwords for \(user); it accepts SSH keys."
             }
             return "The server doesn\u{2019}t accept passwords for \(user); it asks for \(unsupported)"
 
         case .privateKey where !accepts.contains(.publicKey):
-            if accepts.contains(.password) {
-                return "The server didn\u{2019}t finish logging in with the key \(keyName) for \(user): it now asks for a " +
-                       "password. Teleport can\u{2019}t combine a key with a password (a two-step login), and never falls " +
-                       "back to a password while a key is configured."
+            let wants = accepts.contains(.password) && !hasPassword
+                ? "a password, and this connection has none configured."
+                : unsupported
+            if primaryAccepted {
+                return "The server accepted the key \(keyName) for \(user) but also requires a second factor: \(wants)"
             }
-            return "The server didn\u{2019}t finish logging in with the key \(keyName) for \(user): it now asks for " +
-                   unsupported
+            return "The server doesn\u{2019}t accept SSH keys for \(user) (\(keyName) was offered); it wants \(wants)"
 
         default:
             return nil
         }
+    }
+
+    // MARK: - Keyboard-interactive
+
+    /// What to offer on the same connection if the server gets part-way with
+    /// `primary` (see `SSHAuthSequence`): the password as a second step —
+    /// the one case a key and a password are both sent — and then
+    /// keyboard-interactive, which answers a lone password prompt with the
+    /// password and asks the user about anything else.
+    private func followUps(after primary: NIOSSHUserAuthenticationOffer.Offer) -> [NIOSSHUserAuthenticationOffer.Offer] {
+        var followUps: [NIOSSHUserAuthenticationOffer.Offer] = []
+        if !password.isEmpty, case .privateKey = primary {
+            followUps.append(.password(.init(password: password)))
+        }
+        followUps.append(.keyboardInteractive(.init(responder: keyboardInteractiveResponder())))
+        return followUps
+    }
+
+    /// Challenges per connection before giving up on a server that never
+    /// stops asking.
+    private static let keyboardInteractiveRounds = 10
+
+    private func keyboardInteractiveResponder() -> NIOSSHKeyboardInteractiveResponder {
+        let state = KeyboardInteractiveState()
+        return { [self] challenge, promise in
+            Task {
+                do {
+                    promise.succeed(try await self.answer(challenge, state: state))
+                } catch {
+                    promise.fail(error)
+                }
+            }
+        }
+    }
+
+    /// Answers across the challenges of one connection.
+    private final class KeyboardInteractiveState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _passwordTried = false
+        private var _rounds = 0
+        /// True exactly once: the configured password answers the first lone
+        /// hidden prompt. A second one means it was wrong — then the user is asked.
+        func claimPasswordAnswer() -> Bool {
+            lock.withLock { defer { _passwordTried = true }; return !_passwordTried }
+        }
+        func nextRound() -> Int { lock.withLock { _rounds += 1; return _rounds } }
+    }
+
+    private func answer(_ nioChallenge: NIOSSHKeyboardInteractiveChallenge, state: KeyboardInteractiveState) async throws -> [String] {
+        let challenge = KeyboardInteractiveChallenge(
+            name: nioChallenge.name, instruction: nioChallenge.instruction,
+            prompts: nioChallenge.prompts.map { .init(text: $0.text, echo: $0.echo) }
+        )
+        guard state.nextRound() <= Self.keyboardInteractiveRounds else {
+            throw RemoteClientError.authenticationRejected(
+                "The server kept asking for more information without finishing the login."
+            )
+        }
+        // Nothing asked (a server showing text, or finishing a round): nothing to say.
+        if challenge.prompts.isEmpty { return [] }
+
+        let lonePasswordPrompt = challenge.prompts.count == 1 && !challenge.prompts[0].echo
+        if lonePasswordPrompt, !password.isEmpty, state.claimPasswordAnswer() {
+            return [password]
+        }
+        guard let answers = await interactivePromptProvider(challenge), answers.count == challenge.prompts.count else {
+            throw RemoteClientError.authenticationRejected(
+                "The server asked for more to log in \u{2014} \(challenge.promptSummary) \u{2014} and no answer was given."
+            )
+        }
+        return answers
     }
 
     /// The configured key file's name, for messages.
