@@ -50,6 +50,7 @@ public protocol NIOSSHServerKeyboardInteractiveDelegate {
     /// first challenge, or an immediate outcome.
     func keyboardInteractiveBegan(username: String, submethods: String, promise: EventLoopPromise<NIOSSHKeyboardInteractiveServerStep>)
 
-    /// The client answered the last challenge: answer with another, or an outcome.
-    func keyboardInteractiveResponded(responses: [String], promise: EventLoopPromise<NIOSSHKeyboardInteractiveServerStep>)
+    /// The client answered the last challenge: answer with another, or an
+    /// outcome. `username` is the user the conversation was started for.
+    func keyboardInteractiveResponded(username: String, responses: [String], promise: EventLoopPromise<NIOSSHKeyboardInteractiveServerStep>)
 }

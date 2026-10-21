@@ -60,7 +60,7 @@ final class ScriptedSSHServer {
             promise.succeed(.challenge(script.challenge))
         }
 
-        func keyboardInteractiveResponded(responses: [String],
+        func keyboardInteractiveResponded(username: String, responses: [String],
                                           promise: EventLoopPromise<NIOSSHKeyboardInteractiveServerStep>) {
             guard let script = keyboardInteractive else { return promise.succeed(.failure) }
             lock.withLock { _responsesReceived.append(responses) }
