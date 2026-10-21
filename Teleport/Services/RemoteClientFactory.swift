@@ -53,6 +53,9 @@ enum RemoteClientFactory {
                     )
                     lastPassphrase.value = answer
                     return answer
+                },
+                interactivePromptProvider: { challenge in
+                    await InteractivePrompt.shared.answer(for: connection.name, challenge: challenge)
                 }
             )
         case .ftp, .ftps:

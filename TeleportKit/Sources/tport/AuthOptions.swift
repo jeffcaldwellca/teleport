@@ -64,6 +64,31 @@ struct AuthOptions: ParsableArguments {
         return String(cString: entered)
     }
 
+    /// Answers a server's keyboard-interactive prompts on the terminal: the
+    /// configured password already answers a lone password prompt before
+    /// this is asked, so what arrives here is a verification code or a
+    /// custom prompt. Without a terminal there is nobody to ask.
+    @Sendable
+    private static func keyboardInteractivePrompts(_ challenge: KeyboardInteractiveChallenge) async -> [String]? {
+        guard isatty(STDIN_FILENO) != 0 else { return nil }
+        let standardError = FileHandle.standardError
+        for line in [challenge.name, challenge.instruction] where !line.isEmpty {
+            standardError.write(Data((line + "\n").utf8))
+        }
+        var answers: [String] = []
+        for prompt in challenge.prompts {
+            if prompt.echo {
+                standardError.write(Data(prompt.text.utf8))
+                guard let line = readLine(strippingNewline: true) else { return nil }
+                answers.append(line)
+            } else {
+                guard let entered = getpass(prompt.text) else { return nil }
+                answers.append(String(cString: entered))
+            }
+        }
+        return answers
+    }
+
     static var defaultKnownHostsURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".teleport/known_hosts.json")
     }
@@ -119,7 +144,8 @@ struct AuthOptions: ParsableArguments {
                 password: password,
                 hostKeyStore: makeHostKeyStore(),
                 onUnknownHostKey: { [acceptNewHostkey] _, _, _ in acceptNewHostkey },
-                passphraseProvider: Self.keyPassphrase
+                passphraseProvider: Self.keyPassphrase,
+                interactivePromptProvider: Self.keyboardInteractivePrompts
             )
         case .ftp, .ftps:
             return FTPClient(

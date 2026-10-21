@@ -98,6 +98,13 @@ struct ContentView: View {
         )) { request in
             PassphraseSheet(request: request)
         }
+        .sheet(item: Binding(
+            get: { InteractivePrompt.shared.pending },
+            // Dismissed without an answer: the login gives up.
+            set: { if $0 == nil { InteractivePrompt.shared.cancel() } }
+        )) { request in
+            InteractivePromptSheet(request: request)
+        }
         .modifier(WindowCommandHandlers(localBrowser: localBrowser))
         .task {
             // Saves of remotely-edited files upload through the queue, always
