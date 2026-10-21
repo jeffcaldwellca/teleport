@@ -29,10 +29,16 @@ struct UserAuthenticationStateMachine {
 
     final class KeyboardInteractiveSlot {
         var responder: NIOSSHKeyboardInteractiveResponder?
-        /// Server: who asked to log in with keyboard-interactive.
+        /// Server: who the open keyboard-interactive conversation is for;
+        /// nil when none is open.
         var serverUsername: String?
         /// Server: a challenge is out and a response is legitimate.
         var challengeOutstanding = false
+
+        func endServerConversation() {
+            serverUsername = nil
+            challengeOutstanding = false
+        }
     }
 
     /// Teleport patch: the user a keyboard-interactive login is for (server).
@@ -135,6 +141,11 @@ extension UserAuthenticationStateMachine {
     mutating func receiveUserAuthRequest(_ message: SSHMessage.UserAuthRequestMessage) throws -> EventLoopFuture<NIOSSHUserAuthenticationResponseMessage>? {
         guard message.service == Self.nextServiceName else {
             throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "requested unsupported service: \(message.service)")
+        }
+        // Teleport patch: one keyboard-interactive conversation at a time, so
+        // a response can only ever be judged for the user who started it.
+        if case .keyboardInteractive = message.method, case .server = self.delegate, self.keyboardInteractive.serverUsername != nil {
+            throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "keyboard-interactive request while a conversation is in progress")
         }
 
         switch (self.delegate, self.state) {
@@ -250,12 +261,14 @@ extension UserAuthenticationStateMachine {
     mutating func receiveUserAuthInfoResponse(_ message: SSHMessage.UserAuthInfoResponseMessage) throws -> EventLoopFuture<NIOSSHUserAuthenticationResponseMessage>? {
         switch (self.delegate, self.state) {
         case (.server(let delegate), .awaitingResponses):
-            guard let keyboardInteractive = delegate.keyboardInteractiveDelegate, self.keyboardInteractive.challengeOutstanding else {
+            guard let keyboardInteractive = delegate.keyboardInteractiveDelegate,
+                  self.keyboardInteractive.challengeOutstanding,
+                  let username = self.keyboardInteractive.serverUsername else {
                 throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "keyboard-interactive response without a challenge")
             }
             self.keyboardInteractive.challengeOutstanding = false
             let promise = self.loop.makePromise(of: NIOSSHKeyboardInteractiveServerStep.self)
-            keyboardInteractive.keyboardInteractiveResponded(responses: message.responses, promise: promise)
+            keyboardInteractive.keyboardInteractiveResponded(username: username, responses: message.responses, promise: promise)
             let supportedMethods = delegate.supportedAuthenticationMethods
             return promise.futureResult.map { .init($0, supportedMethods: supportedMethods) }
         case (.server, .authenticationSucceeded):
@@ -409,6 +422,8 @@ extension UserAuthenticationStateMachine {
         case (.server, .awaitingNextRequest):
             preconditionFailure("Too many auth responses sent")
         case (.server, .awaitingResponses(let responseCount)):
+            // Teleport patch: a verdict ends any keyboard-interactive conversation.
+            self.keyboardInteractive.endServerConversation()
             if success {
                 self.state = .authenticationSucceeded
             } else if responseCount > 1 {
