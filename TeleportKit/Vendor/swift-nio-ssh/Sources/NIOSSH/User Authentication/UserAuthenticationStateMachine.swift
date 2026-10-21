@@ -29,6 +29,15 @@ struct UserAuthenticationStateMachine {
 
     final class KeyboardInteractiveSlot {
         var responder: NIOSSHKeyboardInteractiveResponder?
+        /// Server: who asked to log in with keyboard-interactive.
+        var serverUsername: String?
+        /// Server: a challenge is out and a response is legitimate.
+        var challengeOutstanding = false
+    }
+
+    /// Teleport patch: the user a keyboard-interactive login is for (server).
+    var keyboardInteractiveUsername: String? {
+        self.keyboardInteractive.serverUsername
     }
 
     // TODO: The server SHOULD limit the number of authentication attempts the client may make.
@@ -241,9 +250,10 @@ extension UserAuthenticationStateMachine {
     mutating func receiveUserAuthInfoResponse(_ message: SSHMessage.UserAuthInfoResponseMessage) throws -> EventLoopFuture<NIOSSHUserAuthenticationResponseMessage>? {
         switch (self.delegate, self.state) {
         case (.server(let delegate), .awaitingResponses):
-            guard let keyboardInteractive = delegate.keyboardInteractiveDelegate else {
+            guard let keyboardInteractive = delegate.keyboardInteractiveDelegate, self.keyboardInteractive.challengeOutstanding else {
                 throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "keyboard-interactive response without a challenge")
             }
+            self.keyboardInteractive.challengeOutstanding = false
             let promise = self.loop.makePromise(of: NIOSSHKeyboardInteractiveServerStep.self)
             keyboardInteractive.keyboardInteractiveResponded(responses: message.responses, promise: promise)
             let supportedMethods = delegate.supportedAuthenticationMethods
@@ -331,7 +341,7 @@ extension UserAuthenticationStateMachine {
     mutating func sendUserAuthInfoRequest(_: SSHMessage.UserAuthInfoRequestMessage) {
         switch (self.delegate, self.state) {
         case (.server, .awaitingResponses):
-            break
+            self.keyboardInteractive.challengeOutstanding = true
         case (.server, _):
             preconditionFailure("Sent a keyboard-interactive challenge without an outstanding request")
         case (.client, _):
@@ -582,6 +592,7 @@ private extension UserAuthenticationStateMachine {
             guard let handler = delegate.keyboardInteractiveDelegate else {
                 return self.loop.makeSucceededFuture(.failure(.init(authentications: supportedMethods.strings, partialSuccess: false)))
             }
+            self.keyboardInteractive.serverUsername = request.username
             let promise = self.loop.makePromise(of: NIOSSHKeyboardInteractiveServerStep.self)
             handler.keyboardInteractiveBegan(username: request.username, submethods: keyboardInteractive.submethods, promise: promise)
             return promise.futureResult.map { .init($0, supportedMethods: supportedMethods) }
