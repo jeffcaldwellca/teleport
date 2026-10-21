@@ -9,7 +9,8 @@ let package = Package(
         .executable(name: "tport", targets: ["tport"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/orlandos-nl/Citadel", from: "0.8.0"),
+        // Citadel 0.12.1 with one local patch; see Vendor/Citadel/TELEPORT-PATCHES.md.
+        .package(path: "Vendor/Citadel"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
     ],
     targets: [
