@@ -1,16 +1,16 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 ### New
 
 - **Keyboard-interactive SSH logins.** Servers that take passwords only
-  through keyboard-interactive (PAM — the usual setup on a VPS) now log in
+  through keyboard-interactive (PAM, the usual setup on a VPS) now log in
   with the configured password, with no extra prompt. Two-factor servers
   (`AuthenticationMethods publickey,keyboard-interactive` or
   `publickey,password`) work too: the key is accepted, then the second step
-  is sent on the same connection — the configured password, or whatever the
-  server asks for, shown in a sheet in the app and on the terminal in
+  is sent on the same connection, either the configured password or whatever
+  the server asks for, shown in a sheet in the app and on the terminal in
   `tport`. A key is still never followed by the password unless the server
   asks for it as a second step. Fixes #4.
 
@@ -19,7 +19,7 @@
 - **SFTP logins refused by a server's policy now say why.** A server that
   won't take the kind of credential offered used to produce a bare
   "Authentication failed" that looked like a wrong password or key. Teleport
-  now reports what the server will still accept — for example that it
+  now reports what the server will still accept, for example that it
   accepts SSH keys but not passwords, or that the key was accepted but a
   second factor Teleport can't provide is required. A plain wrong password
   or unauthorised key still reads "Authentication failed".

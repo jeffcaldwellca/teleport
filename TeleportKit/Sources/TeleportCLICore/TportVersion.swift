@@ -2,5 +2,5 @@
 /// this is the app's version; a test holds it equal to `MARKETING_VERSION`
 /// in project.yml.
 public enum TportVersion {
-    public static let current = "1.1.0"
+    public static let current = "1.2.0"
 }
