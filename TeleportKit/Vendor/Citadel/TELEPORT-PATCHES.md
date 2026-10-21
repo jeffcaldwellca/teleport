@@ -2,9 +2,10 @@
 
 This is [orlandos-nl/Citadel](https://github.com/orlandos-nl/Citadel) 0.12.1
 (revision `ae8562f895de06ccb86fdb1cbb65fd99c8976e12`), MIT licensed (see
-LICENSE), with `Tests/`, `Examples/` and the `Dockerfile` left out. Its own
-dependencies (SwiftNIO, the Wellz26 fork of swift-nio-ssh, swift-crypto, …)
-are still fetched from upstream by `Package.swift`.
+LICENSE), with `Tests/`, `Examples/` and the `Dockerfile` left out. Its
+`Package.swift` takes swift-nio-ssh from the vendored, patched copy next door
+(`../swift-nio-ssh`, see its own TELEPORT-PATCHES.md); the other dependencies
+(SwiftNIO, swift-crypto, …) are still fetched from upstream.
 
 It is vendored so that `TeleportKit` can carry the patch below; nothing else
 is changed. To upgrade, replace `Sources/`, `Package.swift`, `LICENSE` and
@@ -21,7 +22,10 @@ the delegate never sees the server's USERAUTH_FAILURE reply — the list of
 methods it will still accept. Teleport's `SSHAuthSequence` needs that list to
 tell a wrong password apart from a server that doesn't take passwords at all,
 and a bad key from a key that was accepted as the first of two required steps
-(GitHub issue #4). The patch forwards every call to a lone custom delegate.
+(GitHub issue #4). The patch forwards every call to a lone custom delegate,
+including the partial-success variant added to swift-nio-ssh, and lets the
+built-in wrapper check the server's list for the new keyboard-interactive
+offer.
 
 ### `Sources/Citadel/SFTP/SFTPMessageParser.swift` — bound the packet length
 
