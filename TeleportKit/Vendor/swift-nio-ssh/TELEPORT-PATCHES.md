@@ -11,6 +11,17 @@ To upgrade, replace `Sources/NIOSSH`, `LICENSE.txt` and `README.md`, keep this
 `Package.swift`, and re-apply the patch below. Every patched region is marked
 `Teleport patch`.
 
+## Upstream
+
+The partial-success signal is proposed to Apple's repository as
+[apple/swift-nio-ssh#258](https://github.com/apple/swift-nio-ssh/pull/258).
+Client-side keyboard-interactive is already proposed there by someone else
+([#242](https://github.com/apple/swift-nio-ssh/pull/242), tracking
+[#136](https://github.com/apple/swift-nio-ssh/issues/136)) and to the fork
+Citadel depends on ([Wellz26/swift-nio-ssh#1](https://github.com/Wellz26/swift-nio-ssh/pull/1)),
+so this copy's version is not proposed separately; the server side here can
+follow #242 as the follow-up its author left open.
+
 ## Patch: keyboard-interactive authentication (RFC 4256)
 
 Upstream implements only `publickey`, `password` and (nominally) `hostbased`.
