@@ -22,3 +22,25 @@ methods it will still accept. Teleport's `SSHAuthSequence` needs that list to
 tell a wrong password apart from a server that doesn't take passwords at all,
 and a bad key from a key that was accepted as the first of two required steps
 (GitHub issue #4). The patch forwards every call to a lone custom delegate.
+
+### `Sources/Citadel/SFTP/SFTPMessageParser.swift` — bound the packet length
+
+The parser read a 32-bit length and asked for more data until that many
+bytes had arrived, so a server could make the client buffer towards a
+4 GiB packet, and a declared length of zero could never complete. Lengths
+of zero or above `SFTPMessageParser.maximumPacketLength` (1 MiB; OpenSSH's
+sftp-server caps its own at 256 KiB) now fail the connection with the new
+`SFTPError.invalidPacketLength`.
+
+### `Sources/Citadel/SFTP/Client/SFTPClient.swift` — bound the loops a server drives
+
+`listDirectory` re-asked `realpath` until the answer stopped changing and
+read `readdir` until EOF, both for as long as the server cared to keep
+going. The realpath loop now gives up after `maximumRealPathRounds` (8) with
+`SFTPError.invalidResponse`; the readdir loop stops with the new
+`SFTPError.directoryListingTooLarge` once a listing exceeds `maximumEntries`
+(a new parameter, default `defaultMaximumDirectoryEntries` = 1,000,000;
+an empty reply counts as one entry so endless empty replies end too).
+
+Both are covered by `SFTPMessageParserTests` and `SFTPListingLimitTests`
+in TeleportKit's test target.

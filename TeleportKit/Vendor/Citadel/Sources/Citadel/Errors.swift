@@ -24,6 +24,10 @@ public enum SFTPError: Error {
     case fileHandleInvalid
     case errorStatus(SFTPMessage.Status)
     case unsupportedVersion(SFTPProtocolVersion)
+    /// Teleport patch: a packet length of zero or above `SFTPMessageParser.maximumPacketLength`.
+    case invalidPacketLength(UInt32)
+    /// Teleport patch: a directory listing exceeded `SFTPClient.listDirectory(atPath:maximumEntries:)`'s cap.
+    case directoryListingTooLarge(maximumEntries: Int)
 }
 
 public enum CitadelError: Error {
