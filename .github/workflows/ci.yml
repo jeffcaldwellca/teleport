@@ -32,6 +32,13 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO
 
+      - name: Build tport (warms the SwiftPM cache for the CLI tests)
+        # CLIIntegrationTests runs `swift build --product tport` inside the
+        # test process. A cold build of TeleportKit takes minutes, far past
+        # the per-test allowance below, so do it here first; the in-test
+        # build is then an incremental no-op.
+        run: cd TeleportKit && swift build --product tport
+
       - name: Test
         run: |
           # Per-test timeout so a hanging test fails the job instead of
