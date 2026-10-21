@@ -71,9 +71,12 @@ struct AuthOptions: ParsableArguments {
     @Sendable
     private static func keyboardInteractivePrompts(_ challenge: KeyboardInteractiveChallenge) async -> [String]? {
         guard isatty(STDIN_FILENO) != 0 else { return nil }
+        // The challenge's text is the server's (stripped of control
+        // characters on the way in); say so before showing it.
         let standardError = FileHandle.standardError
+        standardError.write(Data("The server asks, to finish logging in:\n".utf8))
         for line in [challenge.name, challenge.instruction] where !line.isEmpty {
-            standardError.write(Data((line + "\n").utf8))
+            standardError.write(Data(("  " + line.replacingOccurrences(of: "\n", with: "\n  ") + "\n").utf8))
         }
         var answers: [String] = []
         for prompt in challenge.prompts {
