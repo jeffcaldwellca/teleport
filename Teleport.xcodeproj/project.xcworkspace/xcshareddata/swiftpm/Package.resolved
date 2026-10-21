@@ -10,15 +10,6 @@
       }
     },
     {
-      "identity" : "citadel",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/orlandos-nl/Citadel",
-      "state" : {
-        "revision" : "ae8562f895de06ccb86fdb1cbb65fd99c8976e12",
-        "version" : "0.12.1"
-      }
-    },
-    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",
