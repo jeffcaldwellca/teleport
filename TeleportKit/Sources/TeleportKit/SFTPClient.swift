@@ -104,9 +104,10 @@ public actor SFTPClient: RemoteClient {
 
         // One credential per connection attempt, moving on when the server
         // rejects it. Offering them all on a single connection would be
-        // cheaper, but Citadel consults a custom authentication delegate only
-        // once per connection. The server closes a connection whose
-        // authentication failed, so nothing is left behind.
+        // cheaper, but then the key file would have to be read (and its
+        // passphrase asked for) before knowing whether an agent key gets in.
+        // The server closes a connection whose authentication failed, so
+        // nothing is left behind.
         var connected: SSHClient?
         for (index, credential) in credentials.enumerated() {
             let offer: NIOSSHUserAuthenticationOffer.Offer
@@ -117,13 +118,15 @@ public actor SFTPClient: RemoteClient {
             case .keyFile:          offer = try await keyFileOffer()
             }
             let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+            let sequence = SSHAuthSequence(username: connection.username, offers: [offer])
             do {
                 connected = try await SSHClient.connect(
                     host: connection.host,
                     port: connection.port,
-                    authenticationMethod: .custom(SSHAuthSequence(username: connection.username, offers: [offer])),
+                    authenticationMethod: .custom(sequence),
                     hostKeyValidator: .custom(validator),
                     reconnect: .never,
+                    algorithms: SSHTransport.algorithms,
                     group: group
                 )
                 eventLoopGroup.adopt(group)
@@ -147,6 +150,11 @@ public actor SFTPClient: RemoteClient {
                 let failure = translateConnectFailure(error)
                 guard case RemoteClientError.authenticationFailed = failure else { throw failure }
                 if hasMore { continue }   // rejected: try the next credential
+                if let why = Self.explainRefusal(of: offer, user: connection.username,
+                                                 keyName: keyFileName,
+                                                 serverStillAccepts: sequence.methodsServerStillAccepts) {
+                    throw RemoteClientError.authenticationRejected(why)
+                }
                 if case .keyFile = credential, offeringRSAKeyFile {
                     throw RemoteClientError.authenticationRejected(
                         "The server rejected this RSA key. Teleport can only use RSA keys with the older SHA-1 " +
@@ -238,6 +246,57 @@ public actor SFTPClient: RemoteClient {
         default:
             return RemoteClientError.connectionFailed("Could not connect to \(target) — \(error)")
         }
+    }
+
+    /// Why the server wouldn't take the credential, when its reply shows the
+    /// *kind* of credential is the problem rather than its value — the
+    /// server lists what it will still accept in every refusal. Nil when the
+    /// server still takes that kind: then the credential itself was wrong,
+    /// and a plain "Authentication failed" is the honest answer.
+    ///
+    /// SwiftNIO SSH only knows public key, password and host-based, so a
+    /// server asking for keyboard-interactive (the usual way a VPS does
+    /// password logins, and the second step of most two-factor setups) shows
+    /// up as an empty list — and so does a key that was accepted but is only
+    /// the first of two required steps, since the two-factor flag is lost on
+    /// the way. Both mean the same to the user: finish the login elsewhere.
+    static func explainRefusal(
+        of offer: NIOSSHUserAuthenticationOffer.Offer,
+        user: String,
+        keyName: String,
+        serverStillAccepts: NIOSSHAvailableUserAuthenticationMethods?
+    ) -> String? {
+        guard let accepts = serverStillAccepts else { return nil }
+        let unsupported = "an authentication method Teleport doesn\u{2019}t support yet (keyboard-interactive, or a " +
+                          "second factor). Other SSH clients that support it will log in."
+
+        switch offer {
+        case .password where !accepts.contains(.password):
+            if accepts.contains(.publicKey) {
+                return "The server doesn\u{2019}t accept passwords for \(user); it accepts SSH keys. (If a password " +
+                       "works in other apps, the server uses keyboard-interactive login, which Teleport doesn\u{2019}t " +
+                       "support yet.)"
+            }
+            return "The server doesn\u{2019}t accept passwords for \(user); it asks for \(unsupported)"
+
+        case .privateKey where !accepts.contains(.publicKey):
+            if accepts.contains(.password) {
+                return "The server didn\u{2019}t finish logging in with the key \(keyName) for \(user): it now asks for a " +
+                       "password. Teleport can\u{2019}t combine a key with a password (a two-step login), and never falls " +
+                       "back to a password while a key is configured."
+            }
+            return "The server didn\u{2019}t finish logging in with the key \(keyName) for \(user): it now asks for " +
+                   unsupported
+
+        default:
+            return nil
+        }
+    }
+
+    /// The configured key file's name, for messages.
+    private var keyFileName: String {
+        let name = (connection.sshKeyPath as NSString).lastPathComponent
+        return name.isEmpty ? "the SSH key" : name
     }
 
     /// Agent keys offered per connection. Servers allow only a few tries
@@ -677,8 +736,8 @@ private final class OwnedEventLoopGroup: @unchecked Sendable {
 /// Done with SwiftNIO SSH directly rather than through Citadel because
 /// Citadel leaves the TCP connection open when a handshake is refused — each
 /// probe would hold a half-open session until the server's login timeout.
-/// Citadel's default configuration adds no algorithms of its own, so the
-/// probe negotiates the same host key the real connection will see.
+/// It offers the same algorithms (`SSHTransport`) as the real connection, so
+/// the probe negotiates the same host key the connection will see.
 ///
 /// All state is confined to the channel's event loop.
 private final class HostKeyProbe: ChannelInboundHandler,
@@ -729,9 +788,12 @@ private final class HostKeyProbe: ChannelInboundHandler,
             .connectTimeout(timeout)
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
-                    let configuration = SSHClientConfiguration(
+                    var configuration = SSHClientConfiguration(
                         userAuthDelegate: probe, serverAuthDelegate: probe
                     )
+                    // The same ciphers the real connection offers, so a
+                    // server reachable by one is reachable by the other.
+                    configuration.transportProtectionSchemes = SSHTransport.schemes
                     try channel.pipeline.syncOperations.addHandlers(
                         NIOSSHHandler(role: .client(configuration),
                                       allocator: channel.allocator,
