@@ -61,4 +61,10 @@ final class LocalFileService {
     func copy(from: URL, to: URL) throws {
         try fm.copyItem(at: from, to: to)
     }
+
+    /// `copy`, run off the main actor: a copy takes as long as the data
+    /// takes to write, and a big folder would otherwise freeze the window.
+    static func copyInBackground(from: URL, to: URL) async throws {
+        try await Task.detached { try FileManager.default.copyItem(at: from, to: to) }.value
+    }
 }

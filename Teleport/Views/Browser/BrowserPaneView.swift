@@ -1027,24 +1027,26 @@ struct FileListView: View {
     private func moveOrCopyLocal(_ urls: [URL], into folder: FileItem) {
         clearDropHover()
         let folderURL = URL(fileURLWithPath: folder.path)
-        for url in urls {
-            guard url.path != folder.path,
-                  !(folder.path + "/").hasPrefix(url.path + "/") else { continue }
-            let dest = folderURL.appending(component: url.lastPathComponent)
-            guard !FileManager.default.fileExists(atPath: dest.path) else {
-                appState.showError(title: "Can't Move",
-                                   message: "'\(url.lastPathComponent)' already exists in '\(folder.name)'.")
-                continue
-            }
-            do {
-                if url.deletingLastPathComponent().path == vm.currentPath {
-                    try LocalFileService.shared.move(from: url, to: dest)
-                } else {
-                    try LocalFileService.shared.copy(from: url, to: dest)
+        Task {
+            for url in urls {
+                guard url.path != folder.path,
+                      !(folder.path + "/").hasPrefix(url.path + "/") else { continue }
+                let dest = folderURL.appending(component: url.lastPathComponent)
+                guard !FileManager.default.fileExists(atPath: dest.path) else {
+                    appState.showError(title: "Can't Move",
+                                       message: "'\(url.lastPathComponent)' already exists in '\(folder.name)'.")
+                    continue
                 }
-            } catch { appState.showError(error) }
+                do {
+                    if url.deletingLastPathComponent().path == vm.currentPath {
+                        try LocalFileService.shared.move(from: url, to: dest)
+                    } else {
+                        try await LocalFileService.copyInBackground(from: url, to: dest)
+                    }
+                } catch { appState.showError(error) }
+            }
+            await vm.refresh()
         }
-        Task { await vm.refresh() }
     }
 
     /// Remote items dropped on the local pane → download into `destDir` (the
@@ -1082,9 +1084,11 @@ struct FileListView: View {
         if vm.isLocal {
             let source = URL(fileURLWithPath: item.path)
             let dest = appState.transferQueue.uniqueLocalURL(for: source)
-            do { try LocalFileService.shared.copy(from: source, to: dest) }
-            catch { appState.showError(error) }
-            Task { await vm.refresh() }
+            Task {
+                do { try await LocalFileService.copyInBackground(from: source, to: dest) }
+                catch { appState.showError(error) }
+                await vm.refresh()
+            }
         } else {
             guard let session = remoteSession,
                   let safeName = RemotePath.sanitizedFilename(item.name) else { return }
