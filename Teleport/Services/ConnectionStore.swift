@@ -120,8 +120,25 @@ final class ConnectionStore {
     }
 
     private func load() {
-        guard let data = defaults.data(forKey: defaultsKey),
-              let decoded = try? JSONDecoder().decode([Connection].self, from: data) else { return }
-        connections = decoded
+        guard let data = defaults.data(forKey: defaultsKey) else { return }
+        if let decoded = try? JSONDecoder().decode([Connection].self, from: data) {
+            connections = decoded
+            return
+        }
+        // One record that won't decode (damaged, or written by a newer
+        // version) used to empty the whole list, and the next save wrote
+        // that over every connection. Keep the ones that do decode, and a
+        // copy of what was stored, before anything is saved over it.
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        defaults.set(data, forKey: "\(defaultsKey).unreadable-\(stamp)")
+        connections = (try? JSONDecoder().decode([Lenient].self, from: data))?.compactMap(\.connection) ?? []
+    }
+
+    /// A stored connection, or nil if that one record doesn't decode.
+    private struct Lenient: Decodable {
+        let connection: Connection?
+        init(from decoder: Decoder) throws {
+            connection = try? Connection(from: decoder)
+        }
     }
 }

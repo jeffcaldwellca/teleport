@@ -117,12 +117,17 @@ final class BookmarkStore {
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
-        guard let url = Self.storeURL,
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode(File.self, from: data) else {
+        guard let url = Self.storeURL, let data = try? Data(contentsOf: url) else { return }
+        if let decoded = try? JSONDecoder().decode(File.self, from: data) {
+            file = decoded
             return
         }
-        file = decoded
+        // Unreadable (damaged, or from a newer version): set it aside rather
+        // than let the next save replace it with an empty map.
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        try? FileManager.default.moveItem(
+            at: url, to: url.deletingLastPathComponent().appending(component: "bookmarks.json.unreadable-\(stamp)")
+        )
     }
 
     private func persist() throws {

@@ -87,4 +87,25 @@ final class SSHConfigImportTests: XCTestCase {
                                        forgetPassphrase: { _ in })
         XCTAssertEqual(reloaded.connections.map(\.name), ["web"])
     }
+
+    /// One record that won't decode must not cost the user every other
+    /// saved connection.
+    func test_aDamagedRecord_doesNotWipeTheOtherConnections() throws {
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let good = try JSONEncoder().encode([Connection(name: "keep", host: "keep.example.com")])
+        var records = try XCTUnwrap(JSONSerialization.jsonObject(with: good) as? [Any])
+        records.append(["name": "broken"])
+        let stored = try JSONSerialization.data(withJSONObject: records)
+        defaults.set(stored, forKey: "com.teleport.connections")
+
+        let reloaded = ConnectionStore(defaults: defaults, secrets: MemorySecrets(), forgetPassphrase: { _ in })
+        XCTAssertEqual(reloaded.connections.map(\.name), ["keep"])
+        try reloaded.add(Connection(name: "new", host: "new.example.com"), password: "")
+
+        let again = ConnectionStore(defaults: defaults, secrets: MemorySecrets(), forgetPassphrase: { _ in })
+        XCTAssertEqual(again.connections.map(\.name), ["keep", "new"])
+        let backups = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("com.teleport.connections.unreadable-") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(backups.first.flatMap { defaults.data(forKey: $0) }, stored)
+    }
 }
