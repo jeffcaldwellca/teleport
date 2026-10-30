@@ -79,6 +79,24 @@ struct ConnectionEditorView: View {
                                 .labelsHidden()
                             Spacer()
                         }
+                        .onChange(of: connection.port) { _, port in
+                            // 990 is implicit FTPS's port (and what selected it before
+                            // there was a setting).
+                            if connection.connectionProtocol == .ftps, port == 990 { connection.implicitTLS = true }
+                        }
+                    }
+                    if connection.connectionProtocol == .ftps {
+                        fieldRow("") {
+                            Toggle("Implicit TLS", isOn: $connection.implicitTLS)
+                                .toggleStyle(.checkbox)
+                                .help("Start TLS as soon as the connection opens, as implicit FTPS servers (usually on port 990) expect. Off: connect in plaintext and upgrade with AUTH TLS.")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .onChange(of: connection.implicitTLS) { _, implicit in
+                                    // Follow the usual port for each mode, unless a custom one was set.
+                                    if implicit, connection.port == 21 { connection.port = 990 }
+                                    if !implicit, connection.port == 990 { connection.port = 21 }
+                                }
+                        }
                     }
                     fieldRow("Initial Path") {
                         TextField("/", text: $connection.initialPath)

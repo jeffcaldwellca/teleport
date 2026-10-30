@@ -589,7 +589,7 @@ public actor FTPClient: RemoteClient {
 
         let sock = FTPSocket()
 
-        if connection.connectionProtocol == .ftps && connection.port == 990 {
+        if connection.connectionProtocol == .ftps && connection.implicitTLS {
             // Implicit FTPS: TLS from the start
             try sock.connect(host: connection.host, port: connection.port)
             try startTLS(on: sock)

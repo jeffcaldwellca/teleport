@@ -13,6 +13,9 @@ public struct Connection: Identifiable, Codable, Hashable {
     public var createdAt: Date = Date()
     /// SFTP only: offer keys held by ssh-agent before the key file / password.
     public var useSSHAgent: Bool = false
+    /// FTPS only: TLS from the first byte (implicit FTPS) rather than
+    /// upgrading with AUTH TLS (explicit). Usually on port 990, but not always.
+    public var implicitTLS: Bool = false
 
     public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable {
         case ftp  = "FTP"
@@ -46,7 +49,8 @@ public struct Connection: Identifiable, Codable, Hashable {
         connectionProtocol: ConnectionProtocol = .sftp,
         initialPath: String = "/",
         sshKeyPath: String = "",
-        notes: String = ""
+        notes: String = "",
+        implicitTLS: Bool? = nil
     ) {
         self.name               = name
         self.host               = host
@@ -56,6 +60,8 @@ public struct Connection: Identifiable, Codable, Hashable {
         self.initialPath        = initialPath
         self.sshKeyPath         = sshKeyPath
         self.notes              = notes
+        // Port 990 is implicit FTPS's own port, and what used to select it.
+        self.implicitTLS        = implicitTLS ?? (connectionProtocol == .ftps && self.port == 990)
     }
 
     /// Hand-written so connections saved before a property existed still
@@ -73,6 +79,9 @@ public struct Connection: Identifiable, Codable, Hashable {
         notes              = try container.decode(String.self, forKey: .notes)
         createdAt          = try container.decode(Date.self, forKey: .createdAt)
         useSSHAgent        = try container.decodeIfPresent(Bool.self, forKey: .useSSHAgent) ?? false
+        // Saved before the setting existed: port 990 was what meant implicit.
+        implicitTLS        = try container.decodeIfPresent(Bool.self, forKey: .implicitTLS)
+                             ?? (connectionProtocol == .ftps && port == 990)
     }
 
     public var displayTitle: String {
