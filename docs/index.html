@@ -97,6 +97,14 @@
     },
     {
       "@type": "Question",
+      "name": "Does Teleport support explicit and implicit FTPS?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. FTPS connections upgrade to TLS with AUTH TLS (explicit FTPS) by default. For servers that expect TLS from the first byte, usually on port 990, turn on Implicit TLS in the connection settings. Certificates the system doesn't trust, such as self-signed ones, can be accepted per server. In tport, ftps:// URLs on port 990 use implicit TLS."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Can Teleport sync a folder with a server?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -598,7 +606,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M17 15l3 2-3 2"/></svg>
         </div>
         <h3>FTP · FTPS · SFTP</h3>
-        <p>Connect to any server over FTP, FTPS, or SFTP — with SSH keys, ssh-agent, and host-key verification built in.</p>
+        <p>Connect to any server over FTP, FTPS (explicit or implicit TLS), or SFTP — with SSH keys, ssh-agent, and host-key verification built in.</p>
       </div>
       <div class="feature-card">
         <div class="icon">
@@ -765,6 +773,10 @@
       <details class="faq-item">
         <summary>Does Teleport support SSH keys and ssh-agent?</summary>
         <p>Yes. Teleport authenticates over SFTP with ed25519, ECDSA, and RSA keys, including passphrase-protected ones, with keys held by ssh-agent, and can import hosts from <code>~/.ssh/config</code>.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does Teleport support explicit and implicit FTPS?</summary>
+        <p>Yes. FTPS connections upgrade to TLS with AUTH TLS (explicit FTPS) by default. For servers that expect TLS from the first byte, usually on port 990, turn on <strong>Implicit TLS</strong> in the connection settings. Certificates the system doesn&rsquo;t trust, such as self-signed ones, can be accepted per server. In <code>tport</code>, <code>ftps://</code> URLs on port 990 use implicit TLS.</p>
       </details>
       <details class="faq-item">
         <summary>Can Teleport sync a folder with a server?</summary>
