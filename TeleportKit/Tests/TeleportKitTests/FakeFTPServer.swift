@@ -23,6 +23,7 @@ final class FakeFTPServer: @unchecked Sendable {
     private var _supportsEPSV = true
     private var _mlsdListing: String?
     private var _listReply: (String) -> String? = { _ in nil }
+    private var _listingDelay: TimeInterval = 0
 
     /// Every command line received, across all connections.
     var commands: [String] { lock.withLock { _commands } }
@@ -43,6 +44,13 @@ final class FakeFTPServer: @unchecked Sendable {
     var listReply: (String) -> String? {
         get { lock.withLock { _listReply } }
         set { lock.withLock { _listReply = newValue } }
+    }
+
+    /// How long a listing's data connection stays open and silent before the
+    /// listing is sent, to catch the client mid-read.
+    var listingDelay: TimeInterval {
+        get { lock.withLock { _listingDelay } }
+        set { lock.withLock { _listingDelay = newValue } }
     }
 
     var retr: Retr {
@@ -107,13 +115,13 @@ final class FakeFTPServer: @unchecked Sendable {
                 Self.send(fd, "227 Entering Passive Mode (127,0,0,1,\(dataPort / 256),\(dataPort % 256))")
             case "MLSD":
                 if let listing = mlsdListing {
-                    Self.sendOverData(listing, control: fd, listener: dataListener)
+                    Self.sendOverData(listing, control: fd, listener: dataListener, delay: listingDelay)
                 } else {
                     Self.send(fd, "500 MLSD not understood")
                 }
             case "LIST":
                 if let listing = listReply(argument) {
-                    Self.sendOverData(listing, control: fd, listener: dataListener)
+                    Self.sendOverData(listing, control: fd, listener: dataListener, delay: listingDelay)
                 } else {
                     Self.send(fd, "550 no such directory")
                 }
@@ -150,10 +158,11 @@ final class FakeFTPServer: @unchecked Sendable {
         }
     }
 
-    private static func sendOverData(_ text: String, control fd: Int32, listener: Int32) {
+    private static func sendOverData(_ text: String, control fd: Int32, listener: Int32, delay: TimeInterval) {
         send(fd, "150 opening")
         let dataFD = Darwin.accept(listener, nil, nil)
         if dataFD >= 0 {
+            if delay > 0 { Thread.sleep(forTimeInterval: delay) }
             noSigPipe(dataFD)
             let body = Array(text.utf8)
             _ = Darwin.send(dataFD, body, body.count, 0)

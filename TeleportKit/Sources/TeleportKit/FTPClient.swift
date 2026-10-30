@@ -382,7 +382,9 @@ private final class FTPSocket {
             if b == UInt8(ascii: "\n") { break }
             if b != UInt8(ascii: "\r") { line.append(b) }
         }
-        return String(data: line, encoding: .utf8) ?? ""
+        // Servers that predate UTF-8 send banners and messages in Latin-1;
+        // decoding those to "" would fail the reply-code check.
+        return String(data: line, encoding: .utf8) ?? String(data: line, encoding: .isoLatin1) ?? ""
     }
 
     /// Read a chunk of data. Returns nil when the remote side closes the connection.
@@ -1004,6 +1006,20 @@ public actor FTPClient: RemoteClient {
     }
 
     private func readResponse() throws -> FTPResponse {
+        do {
+            return try readResponse(from: socket)
+        } catch {
+            // A reply we couldn't read in full (cancelled, timed out, garbled)
+            // is still owed. Reading it as the answer to the next command would
+            // leave every later reply one command behind, so drop the session:
+            // the next operation reports "not connected" and the caller logs in
+            // again.
+            abandonSession()
+            throw error
+        }
+    }
+
+    private func readResponse(from socket: FTPSocket?) throws -> FTPResponse {
         guard let s = socket else { throw RemoteClientError.notConnected }
 
         // RFC 959 §4.2: a multi-line reply starts with `<code>-<text>` and ends
@@ -1042,10 +1058,15 @@ public actor FTPClient: RemoteClient {
         guard resp.code == 125 || resp.code == 150 else {
             throw FTPError.serverError(resp.code, resp.message)
         }
-        try secureDataConnection(dataSock)
-
         var result = Data()
-        while let chunk = try dataSock.readChunk() { result.append(chunk) }
+        do {
+            try secureDataConnection(dataSock)
+            while let chunk = try dataSock.readChunk() { result.append(chunk) }
+        } catch {
+            // The transfer's final reply is still to come; see readResponse.
+            abandonSession()
+            throw error
+        }
         // A non-226 final reply means the listing was cut short — surface it
         // rather than silently showing a partial directory.
         let final = try readResponse()

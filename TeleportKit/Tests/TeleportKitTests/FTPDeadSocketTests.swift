@@ -49,4 +49,27 @@ final class FTPDeadSocketTests: XCTestCase {
             // expected: callers treat this as "reconnect"
         }
     }
+
+    func test_aListingCancelledAfterItStarted_dropsTheSessionInsteadOfLeavingItsReplyUnread() async throws {
+        server.mlsdListing = "type=file;size=1; a.txt\r\n"
+        server.listingDelay = 3
+        let client = makeClient()
+        try await client.connect()
+
+        let listing = Task { try await client.listDirectory(at: "/") }
+        try await Task.sleep(for: .milliseconds(300))
+        listing.cancel()
+        _ = try? await listing.value
+
+        // The listing's "226" is still on its way. Reading it as the reply to
+        // the next command would put every later reply one command behind;
+        // the session must be dropped so the caller reconnects instead.
+        server.listingDelay = 0
+        do {
+            _ = try await client.listDirectory(at: "/")
+            XCTFail("The session should have been dropped")
+        } catch RemoteClientError.notConnected {
+            // expected
+        }
+    }
 }
