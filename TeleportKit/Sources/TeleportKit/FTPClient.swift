@@ -658,9 +658,7 @@ public actor FTPClient: RemoteClient {
     private func mlsdSync(path: String) throws -> [FileItem] {
         let data = try openDataConnectionAndRun(command: "MLSD \(path)")
         guard let text = String(data: data, encoding: .utf8) else { throw FTPError.listingFailed("Non-UTF8") }
-        return text.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        return FTPListingParser.lines(of: text)
             .compactMap { FTPListingParser.mlsdLine($0, basePath: path) }
             .filter { $0.name != "." && $0.name != ".." }
     }
@@ -694,9 +692,7 @@ public actor FTPClient: RemoteClient {
         guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
             throw FTPError.listingFailed("Could not decode listing")
         }
-        return text.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        return FTPListingParser.lines(of: text)
     }
 
     private static func parseListLines(_ lines: [String], basePath: String) -> [FileItem] {
@@ -1212,47 +1208,96 @@ public enum FTPListingParser {
 
     // MARK: LIST (UNIX ls -la)
 
-    public static func listLine(_ line: String, basePath: String) -> FileItem? {
-        // "drwxr-xr-x  2 user group  4096 Jan 15 10:30 name"
-        let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        guard parts.count >= 9 else { return nil }
+    /// The lines of a listing, with line endings removed but nothing else:
+    /// trailing spaces belong to the name on the line.
+    static func lines(of text: String) -> [String] {
+        text.components(separatedBy: "\n")
+            .map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+            .filter { !$0.allSatisfy(\.isWhitespace) }
+    }
 
-        let perms     = parts[0]
+    public static func listLine(_ line: String, basePath: String) -> FileItem? {
+        unixListLine(line, basePath: basePath) ?? dosListLine(line, basePath: basePath)
+    }
+
+    private static let months = ["Jan","Feb","Mar","Apr","May","Jun",
+                                 "Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    /// `ls -l` style: "drwxr-xr-x  2 user group  4096 Jan 15 10:30 name".
+    /// The group column is missing on some servers. The name is the rest of
+    /// the line after the single space following the date, taken as is.
+    private static func unixListLine(_ line: String, basePath: String) -> FileItem? {
+        // Fields up to and including the date, with where each one ends.
+        var fields: [(text: Substring, end: String.Index)] = []
+        var index = line.startIndex
+        while fields.count < 9, index < line.endIndex {
+            while index < line.endIndex, line[index] == " " { index = line.index(after: index) }
+            let start = index
+            while index < line.endIndex, line[index] != " " { index = line.index(after: index) }
+            if start < index { fields.append((line[start..<index], index)) }
+        }
+        // The month comes after "perms links owner [group] size".
+        guard let month = [5, 4].first(where: { $0 + 2 < fields.count && months.contains(String(fields[$0].text)) }),
+              Int(fields[month + 1].text) != nil else { return nil }
+
+        let perms     = String(fields[0].text)
         let isDir     = perms.hasPrefix("d")
         let isSymlink = perms.hasPrefix("l")
-        let size      = Int64(parts[4])
-
-        // Reconstruct name (may contain spaces); strip symlink arrow.
-        var rawName = parts[8...].joined(separator: " ")
+        let dateEnd   = fields[month + 2].end
+        guard dateEnd < line.endIndex else { return nil }
+        var rawName = String(line[line.index(after: dateEnd)...])
         var symlinkTarget: String? = nil
-        if let arrow = rawName.range(of: " -> ") {
+        if isSymlink, let arrow = rawName.range(of: " -> ") {
             symlinkTarget = String(rawName[arrow.upperBound...])
             rawName = String(rawName[..<arrow.lowerBound])
         }
         guard let name = RemotePath.sanitizedFilename(rawName) else { return nil }
 
-        let modified = listDate(parts[5], parts[6], parts[7])
-        let path = basePath.hasSuffix("/") ? "\(basePath)\(name)" : "\(basePath)/\(name)"
-
         return FileItem(
             name: name,
-            path: path,
+            path: RemotePath.join(basePath, name),
             isDirectory: isDir,
             isSymlink: isSymlink,
             symlinkTarget: symlinkTarget.flatMap(RemotePath.sanitizedFilename),
-            size: size,
-            modifiedDate: modified,
+            size: Int64(fields[month - 1].text),
+            modifiedDate: listDate(String(fields[month].text), String(fields[month + 1].text),
+                                   String(fields[month + 2].text)),
             permissions: perms,
-            owner: parts[2],
-            group: parts[3]
+            owner: String(fields[2].text),
+            group: month == 5 ? String(fields[3].text) : nil
+        )
+    }
+
+    /// IIS / Windows style: "01-15-24  10:30AM       <DIR>          name"
+    /// or "12-01-2023  01:05PM             1234 name" (month first).
+    private static func dosListLine(_ line: String, basePath: String) -> FileItem? {
+        guard let match = line.wholeMatch(
+            of: #/(\d{2})-(\d{2})-(\d{2}|\d{4}) +(\d{1,2}):(\d{2})([AP]M) +(<DIR>|\d+) +(.+)/#
+        ) else { return nil }
+        let out = match.output
+        guard let name = RemotePath.sanitizedFilename(String(out.8)) else { return nil }
+        var year = Int(out.3) ?? 0
+        if out.3.count == 2 { year += year < 70 ? 2000 : 1900 }
+        var hour = (Int(out.4) ?? 0) % 12
+        if out.6 == "PM" { hour += 12 }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let modified = calendar.date(from: DateComponents(
+            year: year, month: Int(out.1), day: Int(out.2), hour: hour, minute: Int(out.5)
+        ))
+        let isDir = out.7 == "<DIR>"
+        return FileItem(
+            name: name,
+            path: RemotePath.join(basePath, name),
+            isDirectory: isDir,
+            size: isDir ? nil : Int64(out.7),
+            modifiedDate: modified
         )
     }
 
     /// `ls -l` carries no timezone, so we interpret it as UTC for consistency
     /// with MLSD/MDTM (which are UTC) instead of the client's local zone.
     public static func listDate(_ month: String, _ day: String, _ yearOrTime: String, now: Date = Date()) -> Date? {
-        let months = ["Jan","Feb","Mar","Apr","May","Jun",
-                      "Jul","Aug","Sep","Oct","Nov","Dec"]
         guard let mIdx = months.firstIndex(of: month) else { return nil }
         var c = DateComponents()
         var cal = Calendar(identifier: .gregorian)

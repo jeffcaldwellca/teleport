@@ -106,4 +106,56 @@ final class FTPListingTests: XCTestCase {
         let plain = FTPListingParser.mlsdLine("type=file;size=11;modify=20240115103000; a.txt", basePath: "/var/www")
         XCTAssertEqual(plain?.isSymlink, false)
     }
+
+    // MARK: - LIST names
+
+    /// The name is everything after the date column, exactly: a transfer of
+    /// a name the parser altered asks the server for a file that isn't there.
+    func test_list_keepsNamesExactly() {
+        let doubleSpace = FTPListingParser.listLine("-rw-r--r-- 1 u g 5 Jan 15 2024 my  file.txt", basePath: "/")
+        XCTAssertEqual(doubleSpace?.name, "my  file.txt")
+        let trailing = FTPListingParser.listLine("-rw-r--r-- 1 u g 5 Jan 15 2024 notes ", basePath: "/")
+        XCTAssertEqual(trailing?.name, "notes ")
+        let arrow = FTPListingParser.listLine("-rw-r--r-- 1 u g 5 Jan 15 10:30 a -> b.txt", basePath: "/d")
+        XCTAssertEqual(arrow?.name, "a -> b.txt")
+        XCTAssertEqual(arrow?.path, "/d/a -> b.txt")
+        XCTAssertNil(arrow?.symlinkTarget)
+    }
+
+    func test_list_symlink_splitsOffItsTarget() {
+        let link = FTPListingParser.listLine("lrwxrwxrwx 1 u g 9 Jan 15 10:30 current -> release-3", basePath: "/srv")
+        XCTAssertEqual(link?.name, "current")
+        XCTAssertEqual(link?.isSymlink, true)
+        XCTAssertEqual(link?.symlinkTarget, "release-3")
+    }
+
+    /// Some servers leave out the group column.
+    func test_list_withoutAGroupColumn() {
+        let item = FTPListingParser.listLine("-rw-r--r-- 1 owner 1234 Jan 15 2024 a b.txt", basePath: "/")
+        XCTAssertEqual(item?.name, "a b.txt")
+        XCTAssertEqual(item?.size, 1234)
+        XCTAssertEqual(item?.owner, "owner")
+    }
+
+    /// IIS and other Windows servers answer LIST in DOS style. Without MLSD
+    /// that's all there is, so not parsing it shows every folder as empty.
+    func test_list_windowsStyle() {
+        let dir = FTPListingParser.listLine("01-15-24  10:30AM       <DIR>          Old Projects", basePath: "/")
+        XCTAssertEqual(dir?.name, "Old Projects")
+        XCTAssertEqual(dir?.isDirectory, true)
+        XCTAssertEqual(dir?.modifiedDate, utcDate(2024, 1, 15, 10, 30))
+
+        let file = FTPListingParser.listLine("12-01-2023  01:05PM             1234 report.pdf", basePath: "/")
+        XCTAssertEqual(file?.name, "report.pdf")
+        XCTAssertEqual(file?.isDirectory, false)
+        XCTAssertEqual(file?.size, 1234)
+        XCTAssertEqual(file?.modifiedDate, utcDate(2023, 12, 1, 13, 5))
+    }
+
+    func test_listing_keepsTrailingSpacesInNames() async throws {
+        server.listReply = { _ in "-rw-r--r-- 1 u g 5 Jan 15 2024 notes \r\n" }
+        let client = try await connectedClient()
+        let items = try await client.listDirectory(at: "/")
+        XCTAssertEqual(items.map(\.name), ["notes "])
+    }
 }
