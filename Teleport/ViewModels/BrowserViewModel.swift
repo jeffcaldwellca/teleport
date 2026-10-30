@@ -31,9 +31,16 @@ final class BrowserViewModel {
     /// so the empty-folder placeholder never flashes before the first load.
     private(set) var hasLoaded = false
 
-    /// Path of the most recent *failed* navigation, so "Retry" re-attempts the
-    /// folder the user actually wanted rather than the one we're still in.
-    private var attemptedPath: String?
+    /// The most recent *failed* navigation, so "Retry" re-attempts the folder
+    /// the user actually wanted (and records it in history the same way)
+    /// rather than reloading the one we're still in.
+    private var attempted: (path: String, mode: NavMode)?
+
+    /// Bumped by every load. Only the newest load may change what the pane
+    /// shows: an older listing that finishes later (a slow reload overtaken
+    /// by a click into a subfolder) is dropped rather than yanking the pane
+    /// back to where it was.
+    private var loadGeneration = 0
 
     /// Cached, derived view of `allItems`. Recomputed only when an input
     /// (items, filter, sort, hidden-visibility) actually changes — not on every
@@ -178,6 +185,11 @@ final class BrowserViewModel {
         if let e = error as? FTPError {
             switch e {
             case .permissionDenied, .authFailed, .untrustedCertificate, .certificateChanged: return false
+            // The server answered, so the session is alive — e.g. a 550 for
+            // a folder that's missing or unreadable. 421 is the server
+            // closing the session.
+            case .serverError(let code, _): return code == 421
+            case .listingFailed: return false
             default: return true
             }
         }
@@ -187,11 +199,15 @@ final class BrowserViewModel {
     /// Re-attempts the most recently failed navigation (falls back to the
     /// current folder), used by the error state's "Retry" button.
     func retry() async {
-        await load(path: attemptedPath ?? currentPath, mode: .reload)
+        let (path, mode) = attempted ?? (currentPath, .reload)
+        await load(path: path, mode: mode)
     }
 
     private func load(path: String, mode: NavMode) async {
         guard !isClosed else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
+        defer { if generation == loadGeneration { isLoading = false } }
         let previous = currentPath
         isLoading = true
         loadError = nil
@@ -210,6 +226,7 @@ final class BrowserViewModel {
                 guard let client else { throw RemoteClientError.notConnected }
                 raw = try await remoteListing(client, at: path)
             }
+            guard generation == loadGeneration else { return }
             // Commit navigation only now that the listing succeeded.
             switch mode {
             case .push:    history.append(previous); forwardStack.removeAll()
@@ -218,21 +235,20 @@ final class BrowserViewModel {
             case .reload:  break
             }
             currentPath   = path
-            attemptedPath = nil
+            attempted     = nil
             allItems      = raw
             hasLoaded     = true
             if mode == .reload {
                 selectedItems.formIntersection(Set(raw.map(\.id)))
             }
-        } catch where error is CancellationError || Task.isCancelled {
-            // Abandoned, not failed: keep showing the folder we had.
+        } catch where error is CancellationError || Task.isCancelled || generation != loadGeneration {
+            // Abandoned or overtaken, not failed: keep showing the folder we had.
         } catch {
-            loadError     = error.localizedDescription
-            attemptedPath = path
+            loadError = error.localizedDescription
+            attempted = (path, mode)
             // Leave currentPath / history / allItems untouched — we're still in
             // the previous folder as far as the user is concerned.
         }
-        isLoading = false
     }
 
     // MARK: - Sort / Filter

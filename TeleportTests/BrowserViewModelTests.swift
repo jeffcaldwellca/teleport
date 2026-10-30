@@ -147,4 +147,48 @@ final class BrowserViewModelTests: XCTestCase {
         await waitUntil { client.listings == 2 && !browser.isLoading }
         XCTAssertNil(browser.loadError)
     }
+
+    // MARK: Overlapping loads and failures
+
+    func test_aSlowReloadFinishingLast_doesNotUndoANewerNavigation() async {
+        let client = GatedListingClient()
+        let browser = BrowserViewModel(client: client, initialPath: "/")
+        client.holdNextListing()
+        let reload = Task { await browser.refresh() }
+        await waitUntil { client.isHolding }
+
+        await browser.navigate(to: "/sub")
+        client.release()
+        await reload.value
+
+        XCTAssertEqual(browser.currentPath, "/sub")
+        XCTAssertEqual(browser.history, ["/"])
+        XCTAssertFalse(browser.isLoading)
+    }
+
+    func test_retryingAFailedNavigation_recordsItInHistory() async {
+        let client = GatedListingClient()
+        let browser = BrowserViewModel(client: client, initialPath: "/")
+        client.failNextListing(with: RemoteClientError.permissionDenied)
+        await browser.navigate(to: "/a")
+        XCTAssertNotNil(browser.loadError)
+        XCTAssertEqual(browser.currentPath, "/")
+
+        await browser.retry()
+
+        XCTAssertNil(browser.loadError)
+        XCTAssertEqual(browser.currentPath, "/a")
+        XCTAssertEqual(browser.history, ["/"])
+    }
+
+    func test_anFTPServerRefusal_isShownWithoutReconnecting() async {
+        let client = GatedListingClient()
+        let browser = BrowserViewModel(client: client, initialPath: "/")
+        client.failNextListing(with: FTPError.serverError(550, "No such directory"))
+
+        await browser.navigate(to: "/missing")
+
+        XCTAssertNotNil(browser.loadError)
+        XCTAssertEqual(client.connects, 0)
+    }
 }
