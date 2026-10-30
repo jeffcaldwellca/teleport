@@ -25,6 +25,11 @@ struct ContentView: View {
 
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
+                // Wide enough for a typical hostname in the sidebar's
+                // connection bar; the system default (about 150pt) cut most
+                // of them off. The sidebar opens at the minimum (the ideal
+                // width isn't used), so that is what sets the default.
+                .navigationSplitViewColumnWidth(min: 240, ideal: 240, max: 420)
         } detail: {
             VStack(spacing: 0) {
                 // ── Two-pane browser ──────────────────────────────
