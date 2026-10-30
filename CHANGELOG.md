@@ -2,7 +2,38 @@
 
 ## Unreleased
 
+### New
+
+- **Implicit TLS setting for FTPS connections.** Implicit FTPS used to be
+  chosen by port 990 alone; servers offering it on another port couldn't be
+  reached, and explicit FTPS on 990 couldn't be used. Existing connections
+  on port 990 keep working as before.
+- **The sidebar opens wide enough for a hostname** (240pt instead of about
+  150pt), and can be widened.
+
 ### Fixed
+
+- **Cancel and Pause stop a transfer the server has stopped responding to.**
+  Over FTP an upload could block indefinitely once the server stopped
+  reading; over SFTP a read or write the server never answered held the
+  transfer (and the stall watchdog) until the network gave up.
+- **FTP names in other encodings work.** Files named in Latin-1,
+  Windows-1252, Shift-JIS and so on can be opened, renamed and deleted, and
+  no longer turn the rest of their folder into mojibake.
+- **FTP data connections go to the server the session is on,** not a fresh
+  DNS lookup that could pick another server behind the same name.
+- **FTPS refuses a connection that sends extra data alongside the reply that
+  starts TLS**, which could otherwise be used to inject replies.
+- **Editing a remote file that's already open reopens that copy** instead of
+  downloading a second one whose saves could overwrite newer content. Files
+  being edited keep uploading on save after Teleport is relaunched, and
+  their copies are no longer deleted at launch. A save is only uploaded if
+  the saved connection still points at the same server and account.
+- **Renaming in place no longer reports a spurious error** when Return and
+  the click away both committed it.
+- **Large transfer queues stay responsive**: the queue header no longer
+  rescans every transfer on each update.
+- **FTP symlink targets that are paths** are no longer dropped.
 
 - **Long upload queues no longer flash a CancellationError in the remote
   pane.** Each finished upload reloads the folder shortly after, and a
