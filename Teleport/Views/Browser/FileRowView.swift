@@ -90,15 +90,17 @@ struct FileNameCell: View {
     }
 
     private func commitRename() {
+        // Return commits, and the focus loss that follows would commit again
+        // while the first rename was still on its way to the server; that
+        // second one then failed against the old name. Leaving edit mode
+        // first makes this run once.
+        guard vm.renamingItem?.id == item.id else { return }
+        vm.renamingItem = nil
         let newName = vm.renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !newName.isEmpty, newName != item.name else {
-            vm.renamingItem = nil
-            return
-        }
+        guard !newName.isEmpty, newName != item.name else { return }
         Task {
             do { try await vm.rename(item: item, to: newName) }
             catch { appState.showError(error) }   // e.g. name taken, permission denied
-            vm.renamingItem = nil
         }
     }
 }
