@@ -177,7 +177,7 @@ final class BrowserViewModel {
         if error is CancellationError { return false }
         if let e = error as? RemoteClientError {
             switch e {
-            case .permissionDenied, .fileNotFound, .unsupported,
+            case .permissionDenied, .fileNotFound, .unsupported, .serverRefused,
                  .authenticationFailed, .authenticationRejected: return false
             default: return true
             }

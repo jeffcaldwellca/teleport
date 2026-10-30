@@ -79,6 +79,10 @@ public enum RemoteClientError: LocalizedError {
     case fileNotFound(String)
     case transferFailed(String)
     case unsupported(String)
+    /// The server answered and refused the request, for a reason other than
+    /// permissions or a missing path (e.g. "file exists"). The session is
+    /// still up.
+    case serverRefused(String)
     case hostKeyUntrusted(host: String, port: Int, fingerprint: String)
     case hostKeyMismatch(host: String, port: Int, expected: String, actual: String)
     case unknown(String)
@@ -93,6 +97,7 @@ public enum RemoteClientError: LocalizedError {
         case .fileNotFound(let p):    return "File not found: \(p)"
         case .transferFailed(let m):  return "Transfer failed: \(m)"
         case .unsupported(let op):    return "\(op) is not supported by this server"
+        case .serverRefused(let m):   return m
         case .hostKeyUntrusted(let host, let port, let fp):
             return "Host key for \(host):\(port) was not trusted (fingerprint \(SSHKeyFingerprint.openSSH(fp))). " +
                    "Reconnect and choose to trust it if this is expected."

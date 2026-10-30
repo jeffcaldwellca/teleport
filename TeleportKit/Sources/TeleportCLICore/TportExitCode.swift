@@ -22,7 +22,7 @@ public enum TportExitCode: Int32 {
                 return .connectionFailed
             case .hostKeyUntrusted, .hostKeyMismatch:
                 return .hostKey
-            case .transferFailed, .unsupported, .unknown:
+            case .transferFailed, .unsupported, .serverRefused, .unknown:
                 return .generalFailure
             }
         }

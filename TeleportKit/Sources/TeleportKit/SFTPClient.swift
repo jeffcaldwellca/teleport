@@ -459,6 +459,11 @@ public actor SFTPClient: RemoteClient {
     // MARK: - List Directory
 
     public func listDirectory(at absolutePath: String) async throws -> [FileItem] {
+        do { return try await performListing(at: absolutePath) }
+        catch { throw Self.mapped(error, path: absolutePath) }
+    }
+
+    private func performListing(at absolutePath: String) async throws -> [FileItem] {
         guard let sftp else { throw RemoteClientError.notConnected }
 
         // listDirectory returns [SFTPMessage.Name]; each Name contains a batch of SFTPPathComponent entries
@@ -489,6 +494,16 @@ public actor SFTPClient: RemoteClient {
     // MARK: - Download
 
     public func download(
+        remotePath: String,
+        to localURL: URL,
+        resume: Bool,
+        progress: @escaping @Sendable (Int64, Int64) -> Void
+    ) async throws {
+        do { try await performDownload(remotePath: remotePath, to: localURL, resume: resume, progress: progress) }
+        catch { throw Self.mapped(error, path: remotePath) }
+    }
+
+    private func performDownload(
         remotePath: String,
         to localURL: URL,
         resume: Bool,
@@ -641,6 +656,16 @@ public actor SFTPClient: RemoteClient {
         resume: Bool,
         progress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
+        do { try await performUpload(from: localURL, remotePath: remotePath, resume: resume, progress: progress) }
+        catch { throw Self.mapped(error, path: remotePath) }
+    }
+
+    private func performUpload(
+        from localURL: URL,
+        remotePath: String,
+        resume: Bool,
+        progress: @escaping @Sendable (Int64, Int64) -> Void
+    ) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
 
         let attrs = try FileManager.default.attributesOfItem(atPath: localURL.path)
@@ -731,21 +756,25 @@ public actor SFTPClient: RemoteClient {
 
     public func createDirectory(at absolutePath: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
-        try await sftp.createDirectory(atPath: absolutePath)
+        do { try await sftp.createDirectory(atPath: absolutePath) }
+        catch { throw Self.mapped(error, path: absolutePath) }
     }
 
     public func delete(at absolutePath: String, isDirectory: Bool) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
-        if isDirectory {
-            try await sftp.rmdir(at: absolutePath)
-        } else {
-            try await sftp.remove(at: absolutePath)
-        }
+        do {
+            if isDirectory {
+                try await sftp.rmdir(at: absolutePath)
+            } else {
+                try await sftp.remove(at: absolutePath)
+            }
+        } catch { throw Self.mapped(error, path: absolutePath) }
     }
 
     public func rename(from: String, to: String) async throws {
         guard let sftp else { throw RemoteClientError.notConnected }
-        try await sftp.rename(at: from, to: to)
+        do { try await sftp.rename(at: from, to: to) }
+        catch { throw Self.mapped(error, path: from) }
     }
 
     public func setPermissions(_ octal: Int, at absolutePath: String) async throws {
@@ -757,7 +786,8 @@ public actor SFTPClient: RemoteClient {
         var attrs = SFTPFileAttributes()
         // Mask off file-type bits — only mode bits are settable per POSIX.
         attrs.permissions = unsigned & 0o7777
-        try await sftp.setAttributes(at: absolutePath, to: attrs)
+        do { try await sftp.setAttributes(at: absolutePath, to: attrs) }
+        catch { throw Self.mapped(error, path: absolutePath) }
     }
 
     public func setOwnership(owner: String, group: String, at absolutePath: String) async throws {
@@ -768,7 +798,31 @@ public actor SFTPClient: RemoteClient {
         }
         var attrs = SFTPFileAttributes()
         attrs.uidgid = .init(userId: uid, groupId: gid)
-        try await sftp.setAttributes(at: absolutePath, to: attrs)
+        do { try await sftp.setAttributes(at: absolutePath, to: attrs) }
+        catch { throw Self.mapped(error, path: absolutePath) }
+    }
+
+    /// The server's answer to a request (SSH_FXP_STATUS) as one of our errors.
+    /// Citadel throws these as its own types, which the app can't tell apart
+    /// from a dropped connection: a folder the user can't read would trigger
+    /// a reconnect, and a refused upload would be retried as if the network
+    /// had failed.
+    static func mapped(_ error: Error, path: String) -> Error {
+        let status: SFTPMessage.Status
+        if let s = error as? SFTPMessage.Status {
+            status = s
+        } else if case SFTPError.errorStatus(let s)? = error as? SFTPError {
+            status = s
+        } else {
+            return error
+        }
+        switch status.errorCode {
+        case .permissionDenied:            return RemoteClientError.permissionDenied
+        case .noSuchFile:                  return RemoteClientError.fileNotFound(path)
+        case .noConnection, .connectionLost: return RemoteClientError.connectionFailed(status.message)
+        default:
+            return RemoteClientError.serverRefused(status.message.isEmpty ? "\(status.errorCode)" : status.message)
+        }
     }
 
 }
