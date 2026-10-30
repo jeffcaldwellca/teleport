@@ -92,4 +92,27 @@ final class SSHHostKeyStoreTests: XCTestCase {
             "a.example.com:22", "a.example.com:2222", "b.example.com:22",
         ])
     }
+
+    /// A damaged store file still holds every key the user pinned. Trusting
+    /// a host afterwards must not write over it.
+    func test_recordingAfterTheStoreFileWasDamaged_keepsTheDamagedFile() async throws {
+        let (store, url) = makeStore()
+        let damaged = Data(#"{"schemaVersion":1,"entries":{"old.example.com:22":{"fingerprint":"SHA256:old""#.utf8)
+        try damaged.write(to: url)
+        let dir = url.deletingLastPathComponent()
+        func asides() throws -> [URL] {
+            try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+                .filter { $0.lastPathComponent.hasPrefix(url.lastPathComponent + ".unreadable-") }
+        }
+        addTeardownBlock { try? asides().forEach { try FileManager.default.removeItem(at: $0) } }
+
+        try await store.record(host: "new.example.com", port: 22, fingerprint: "SHA256:new")
+
+        let kept = try asides()
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(kept.first)), damaged)
+        let reopened = SSHHostKeyStore(storeURL: url)
+        let fp = await reopened.fingerprint(for: "new.example.com", port: 22)
+        XCTAssertEqual(fp, "SHA256:new")
+    }
 }

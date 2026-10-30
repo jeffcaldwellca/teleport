@@ -129,6 +129,25 @@ public actor SSHHostKeyStore {
         return try? decoder.decode(File.self, from: data)
     }
 
+    /// A store file that exists but can't be read as one (truncated, edited
+    /// by hand, written by a newer version). Its entries are unknown, not
+    /// absent: hosts in it will be asked about again, but it must never be
+    /// written over, or every key pinned in it is lost for good.
+    private func isUnreadable(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path) && decodeFile(at: url) == nil
+    }
+
+    /// Moves an unreadable store file aside (next to it, timestamped) so the
+    /// write that follows starts a new file instead of replacing it. Throws
+    /// if it can't be moved, rather than writing over it.
+    private func setAsideUnreadable(_ url: URL) throws {
+        guard isUnreadable(url) else { return }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let aside = url.deletingLastPathComponent()
+            .appending(component: "\(url.lastPathComponent).unreadable-\(stamp)")
+        try FileManager.default.moveItem(at: url, to: aside)
+    }
+
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
@@ -145,7 +164,12 @@ public actor SSHHostKeyStore {
     private func mutate(_ change: (inout File) -> Void) throws {
         var current: File
         if let url = storeURLProvider() {
-            current = decodeFile(at: url) ?? file ?? File()
+            if isUnreadable(url) {
+                try setAsideUnreadable(url)
+                current = file ?? File()
+            } else {
+                current = decodeFile(at: url) ?? file ?? File()
+            }
         } else {
             current = file ?? File()
         }
