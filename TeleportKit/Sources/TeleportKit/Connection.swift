@@ -84,6 +84,14 @@ public struct Connection: Identifiable, Codable, Hashable {
                              ?? (connectionProtocol == .ftps && port == 990)
     }
 
+    /// Same server, account and transport: what a saved operation (such as
+    /// uploading an edited file) must still match before it runs again.
+    public func sameEndpoint(as other: Connection) -> Bool {
+        host.lowercased() == other.host.lowercased() && port == other.port
+            && username == other.username && connectionProtocol == other.connectionProtocol
+            && implicitTLS == other.implicitTLS
+    }
+
     public var displayTitle: String {
         name.isEmpty ? "\(username)@\(host)" : name
     }

@@ -65,4 +65,40 @@ final class RemoteEditManagerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: recent.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
     }
+
+    /// A save goes only to the server the file came from: not after the
+    /// connection was deleted or pointed at another host.
+    func test_aSave_isNotUploadedOnceTheConnectionPointsElsewhere() async throws {
+        let manager = RemoteEditManager(defaults: defaults)
+        var saved = Connection(host: "old.example.com")
+        var uploads: [String] = []
+        manager.enqueueUpload = { connection, _, _ in uploads.append(connection.host); return true }
+        manager.currentConnection = { id in id == saved.id ? saved : nil }
+        let copy = try makeCopy(in: makeBase())
+        manager.beginEditing(localURL: copy, connection: saved, remotePath: "/a.html")
+
+        saved.host = "new.example.com"
+        try Data("edited".utf8).write(to: copy)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: copy.path)
+        try await Task.sleep(for: .seconds(5))     // two polling ticks: change seen, then settled
+
+        XCTAssertEqual(uploads, [])
+        XCTAssertNil(manager.existingCopy(connectionID: saved.id, remotePath: "/a.html"))
+    }
+
+    func test_aSave_isUploadedToTheSameServer() async throws {
+        let manager = RemoteEditManager(defaults: defaults)
+        let saved = Connection(host: "old.example.com")
+        var uploads: [String] = []
+        manager.enqueueUpload = { connection, _, _ in uploads.append(connection.host); return true }
+        manager.currentConnection = { id in id == saved.id ? saved : nil }
+        let copy = try makeCopy(in: makeBase())
+        manager.beginEditing(localURL: copy, connection: saved, remotePath: "/a.html")
+
+        try Data("edited".utf8).write(to: copy)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: copy.path)
+        try await Task.sleep(for: .seconds(5))
+
+        XCTAssertEqual(uploads, ["old.example.com"])
+    }
 }

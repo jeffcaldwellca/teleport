@@ -45,6 +45,10 @@ final class RemoteEditManager {
     /// stays marked dirty and is retried on a later tick.
     var enqueueUpload: ((Connection, URL, String) -> Bool)?
 
+    /// Injected by the UI at startup: the saved connection with this id as it
+    /// is now, or nil if it has been deleted.
+    var currentConnection: ((UUID) -> Connection?)?
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
@@ -122,7 +126,17 @@ final class RemoteEditManager {
             }
             if current != sessions[i].lastUploadedMtime {
                 let s = sessions[i]
-                if enqueueUpload?(s.connection, s.localURL, s.remotePath) == true {
+                // Upload only to the server the file came from. The session
+                // keeps the connection as it was when editing began (and across
+                // relaunches); if it has since been deleted or pointed at
+                // another server or account, a save would otherwise go there
+                // with whatever password the connection now has.
+                guard let resolve = currentConnection else { continue }   // not wired up yet
+                guard let connection = resolve(s.connection.id), connection.sameEndpoint(as: s.connection) else {
+                    evict.append(s.localURL)
+                    continue
+                }
+                if enqueueUpload?(connection, s.localURL, s.remotePath) == true {
                     sessions[i].lastUploadedMtime = current
                 }
             }

@@ -118,6 +118,9 @@ struct ContentView: View {
                     conflictBehavior: .overwrite
                 ) != nil
             }
+            RemoteEditManager.shared.currentConnection = { id in
+                appState.connectionStore.connections.first { $0.id == id }
+            }
             appState.transferQueue.onIdle = { TransferActivityNotifier.queueDidFinish($0) }
             // Seed local browser
             await localBrowser.refresh()
