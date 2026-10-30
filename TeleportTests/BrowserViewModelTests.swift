@@ -9,6 +9,8 @@ private final class PathRecordingClient: RemoteClient, @unchecked Sendable {
     private var _renames: [(from: String, to: String)] = []
     var created: [String] { lock.withLock { _created } }
     var renames: [(from: String, to: String)] { lock.withLock { _renames } }
+    /// Paths the server says exist.
+    var existing: Set<String> = []
 
     func createDirectory(at absolutePath: String) async throws { lock.withLock { _created.append(absolutePath) } }
     func rename(from: String, to: String) async throws { lock.withLock { _renames.append((from, to)) } }
@@ -27,7 +29,7 @@ private final class PathRecordingClient: RemoteClient, @unchecked Sendable {
     func setOwnership(owner: String, group: String, at absolutePath: String) async throws {}
     func remoteModifiedDate(at remotePath: String) async -> Date? { nil }
     func setModifiedDate(_ date: Date, at remotePath: String) async {}
-    func fileExists(at remotePath: String) async -> Bool { false }
+    func fileExists(at remotePath: String) async -> Bool { existing.contains(remotePath) }
 }
 
 /// A server whose listings can be held open, to catch a reload while it's in
@@ -190,5 +192,31 @@ final class BrowserViewModelTests: XCTestCase {
 
         XCTAssertNotNil(browser.loadError)
         XCTAssertEqual(client.connects, 0)
+    }
+
+    // MARK: Rename onto an existing name
+
+    func test_rename_ontoAnExistingRemoteFile_isRefused() async {
+        let client = PathRecordingClient()
+        client.existing = ["/b.txt"]
+        let browser = BrowserViewModel(client: client, initialPath: "/")
+        let item = FileItem(name: "a.txt", path: "/a.txt", isDirectory: false)
+
+        do {
+            try await browser.rename(item: item, to: "b.txt")
+            XCTFail("Renaming over an existing file must be refused")
+        } catch {}
+        XCTAssertTrue(client.renames.isEmpty)
+    }
+
+    func test_rename_changingOnlyTheCase_isAllowedOnACaseInsensitiveServer() async throws {
+        let client = PathRecordingClient()
+        client.existing = ["/a.txt", "/A.txt"]      // both spellings resolve
+        let browser = BrowserViewModel(client: client, initialPath: "/")
+        let item = FileItem(name: "a.txt", path: "/a.txt", isDirectory: false)
+
+        try await browser.rename(item: item, to: "A.txt")
+
+        XCTAssertEqual(client.renames.map(\.to), ["/A.txt"])
     }
 }

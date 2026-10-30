@@ -378,8 +378,17 @@ final class BrowserViewModel {
                 from: URL(fileURLWithPath: item.path),
                 to:   URL(fileURLWithPath: newPath)
             )
-        } else {
-            try await client?.rename(from: item.path, to: newPath)
+        } else if let client, newPath != item.path {
+            // Servers rename over an existing file without a word (SFTP v3
+            // and FTP's RNTO both map to rename(2) on most), so check first.
+            // A change of case only is asked of the listing: a server on a
+            // case-insensitive volume reports the new spelling as existing.
+            let caseOnly = newPath.caseInsensitiveCompare(item.path) == .orderedSame
+            let taken = caseOnly
+                ? allItems.contains { $0.path == newPath }
+                : await client.fileExists(at: newPath)
+            if taken { throw RemoteClientError.serverRefused("\u{201C}\(safeName)\u{201D} already exists.") }
+            try await client.rename(from: item.path, to: newPath)
         }
         await refresh()
     }

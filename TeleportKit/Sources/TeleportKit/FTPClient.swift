@@ -941,8 +941,11 @@ public actor FTPClient: RemoteClient {
     // MARK: - File Existence Check
 
     public func fileExists(at remotePath: String) async -> Bool {
-        let resp = try? sendCommand("SIZE \(remotePath)")
-        return resp?.code == 213
+        if let resp = try? sendCommand("SIZE \(remotePath)"), resp.code == 213 { return true }
+        // SIZE only answers for files. Every other command here takes an
+        // absolute path, so changing directory to ask about a folder is safe.
+        if let resp = try? sendCommand("CWD \(remotePath)"), resp.code == 250 { return true }
+        return false
     }
 
     public func remoteModifiedDate(at remotePath: String) async -> Date? {

@@ -25,6 +25,7 @@ final class FakeFTPServer: @unchecked Sendable {
     private var _listReply: (String) -> String? = { _ in nil }
     private var _listingDelay: TimeInterval = 0
     private var _noopReply = "200 ok"
+    private var _directories: Set<String> = []
 
     /// Every command line received, across all connections.
     var commands: [String] { lock.withLock { _commands } }
@@ -52,6 +53,12 @@ final class FakeFTPServer: @unchecked Sendable {
     var listingDelay: TimeInterval {
         get { lock.withLock { _listingDelay } }
         set { lock.withLock { _listingDelay = newValue } }
+    }
+
+    /// Paths `CWD` succeeds for.
+    var directories: Set<String> {
+        get { lock.withLock { _directories } }
+        set { lock.withLock { _directories = newValue } }
     }
 
     /// The reply to NOOP.
@@ -109,6 +116,7 @@ final class FakeFTPServer: @unchecked Sendable {
             case "USER": Self.send(fd, "230 ok")
             case "TYPE": Self.send(fd, "200 ok")
             case "NOOP": Self.send(fd, noopReply)
+            case "CWD": Self.send(fd, directories.contains(argument) ? "250 ok" : "550 no such directory")
             case "OPTS":
                 Self.send(fd, "200 ok")
                 if dropControlAfterLogin { return }

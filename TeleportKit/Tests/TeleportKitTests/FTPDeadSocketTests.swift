@@ -94,4 +94,15 @@ final class FTPDeadSocketTests: XCTestCase {
         XCTAssertEqual(date?.timeIntervalSince1970, 1_709_640_000)
         XCTAssertEqual(fmt.calendar.identifier, .gregorian)
     }
+
+    func test_fileExists_findsFoldersToo() async throws {
+        server.directories = ["/site"]
+        let client = makeClient()
+        try await client.connect()
+
+        let folder = await client.fileExists(at: "/site")
+        let missing = await client.fileExists(at: "/nothing")
+        XCTAssertTrue(folder)
+        XCTAssertFalse(missing)
+    }
 }
