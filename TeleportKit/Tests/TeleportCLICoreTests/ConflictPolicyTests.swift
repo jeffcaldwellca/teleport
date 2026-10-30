@@ -83,4 +83,28 @@ final class ConflictPolicyTests: XCTestCase {
     func test_recursiveTransferLimit_matchesSync() {
         XCTAssertEqual(FolderWalk.defaultLimit, FolderSync.defaultLimit)
     }
+
+    /// With --resume the existing destination is the partial copy to finish.
+    func test_resume_proceedsDespiteTheSkipPolicy() {
+        XCTAssertEqual(
+            decideConflict(policy: .skip, exists: true, localDate: nil, remoteDate: nil, direction: .put, resume: true),
+            .proceed
+        )
+    }
+
+    func test_get_intoAnExistingFolder_writesTheFileInsideIt() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(component: "tport-dest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        XCTAssertEqual(downloadDestination(remotePath: "/srv/f.txt", local: dir.path).lastPathComponent, "f.txt")
+        XCTAssertEqual(downloadDestination(remotePath: "/srv/f.txt", local: dir.path + "/g.txt").lastPathComponent, "g.txt")
+        XCTAssertEqual(downloadDestination(remotePath: "/srv/f.txt", local: "/nonexistent/new/").path, "/nonexistent/new/f.txt")
+    }
+
+    func test_put_toAFolderURL_writesTheFileInsideIt() {
+        let local = URL(fileURLWithPath: "/tmp/f.txt")
+        XCTAssertEqual(uploadDestination(localURL: local, remotePath: "/srv/"), "/srv/f.txt")
+        XCTAssertEqual(uploadDestination(localURL: local, remotePath: "/srv/g.txt"), "/srv/g.txt")
+    }
 }

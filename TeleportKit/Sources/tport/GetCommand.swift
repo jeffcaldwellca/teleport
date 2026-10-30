@@ -36,7 +36,8 @@ struct GetCommand: AsyncParsableCommand {
                 if recursive {
                     try await getFolder(client: client, remotePath: target.path, into: localURL, limit: maxItems)
                 } else {
-                    try await getFile(client: client, remotePath: target.path, localURL: localURL)
+                    try await getFile(client: client, remotePath: target.path,
+                                      localURL: downloadDestination(remotePath: target.path, local: local))
                 }
             }
         }
@@ -54,7 +55,7 @@ struct GetCommand: AsyncParsableCommand {
             localDate = (try? localURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             remoteDate = await client.remoteModifiedDate(at: remotePath)
         }
-        let decision = decideConflict(policy: onConflict, exists: exists, localDate: localDate, remoteDate: remoteDate, direction: .get)
+        let decision = decideConflict(policy: onConflict, exists: exists, localDate: localDate, remoteDate: remoteDate, direction: .get, resume: resume)
         guard decision == .proceed else {
             if !global.quiet { FileHandle.standardError.write(Data("skipped (exists): \(localURL.path)\n".utf8)) }
             return

@@ -159,8 +159,13 @@ struct SyncCommand: AsyncParsableCommand {
                         }
                     } else {
                         try await client.download(remotePath: remotePath, to: localURL, resume: false) { _, _ in }
-                        var modified = remoteTimes[action.relativePath] ?? nil
-                        if modified == nil { modified = await client.remoteModifiedDate(at: remotePath) }
+                        // The server's exact time first: a LIST-only FTP server's
+                        // listing time is cut to the minute, and stamping that on
+                        // the file made the next run see it as changed (MDTM
+                        // disagreeing by up to 59 s) and download it again, every
+                        // run. The listing time is the fallback.
+                        var modified = await client.remoteModifiedDate(at: remotePath)
+                        if modified == nil { modified = remoteTimes[action.relativePath] ?? nil }
                         if let modified {
                             try? FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: localURL.path)
                         }
