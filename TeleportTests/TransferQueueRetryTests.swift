@@ -14,6 +14,18 @@ private final class ScriptedClient: RemoteClient, @unchecked Sendable {
         private var _uploadResumeFlags: [Bool] = []
         /// How long `disconnect()` takes, like a QUIT round trip.
         var disconnectDelay: Duration = .zero
+        /// How long each download takes.
+        var downloadDelay: Duration = .zero
+        private var _downloadsRunning = 0
+        private var _mostDownloadsAtOnce = 0
+        var mostDownloadsAtOnce: Int { lock.withLock { _mostDownloadsAtOnce } }
+        func downloadStarted() {
+            lock.withLock {
+                _downloadsRunning += 1
+                _mostDownloadsAtOnce = max(_mostDownloadsAtOnce, _downloadsRunning)
+            }
+        }
+        func downloadEnded() { lock.withLock { _downloadsRunning -= 1 } }
         /// Whether upload destinations already exist (i.e. every upload conflicts).
         let destinationsExist: Bool
         init(failingConnects: Int = 0, failingPings: Int = 0, destinationsExist: Bool = true) {
@@ -62,7 +74,11 @@ private final class ScriptedClient: RemoteClient, @unchecked Sendable {
     }
     func listDirectory(at absolutePath: String) async throws -> [FileItem] { [] }
     func download(remotePath: String, to localURL: URL, resume: Bool,
-                  progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {}
+                  progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
+        script.downloadStarted()
+        defer { script.downloadEnded() }
+        if script.downloadDelay > .zero { try await Task.sleep(for: script.downloadDelay) }
+    }
     func upload(from localURL: URL, remotePath: String, resume: Bool,
                 progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         script.recordUpload(resume: resume)
@@ -375,5 +391,26 @@ final class TransferQueueRetryTests: XCTestCase {
         XCTAssertNotNil(queue.pendingConflict, "A new batch must ask again")
         queue.resolveConflict(.skip, applyToAll: false)
         try await waitUntil("later settled") { later.status.isFinal }
+    }
+
+    /// "README" and "readme" are two files on a case-sensitive server but one
+    /// on the Mac's disk. Downloading both at once interleaves them into one
+    /// corrupt file; the second must wait, and then meet the first as a
+    /// conflict like any other existing file.
+    func test_downloadsWhoseNamesDifferOnlyInCase_doNotRunAtTheSameTime() async throws {
+        Preferences.shared.maxConcurrentTransfers = 2
+        let script = ScriptedClient.Script(destinationsExist: false)
+        script.downloadDelay = .milliseconds(200)
+        let queue = makeQueue(script)
+        let dir = FileManager.default.temporaryDirectory.appending(component: "teleport-case-\(UUID().uuidString)")
+        let connection = Connection(host: "example.invalid")
+        let tasks = queue.enqueueBatch(connection: connection, direction: .download, items: [
+            (dir.appending(component: "README"), "/README"),
+            (dir.appending(component: "readme"), "/readme"),
+        ])
+        XCTAssertEqual(tasks.count, 2)
+
+        try await waitUntil("both finished") { tasks.allSatisfy(\.status.isFinal) }
+        XCTAssertEqual(script.mostDownloadsAtOnce, 1)
     }
 }

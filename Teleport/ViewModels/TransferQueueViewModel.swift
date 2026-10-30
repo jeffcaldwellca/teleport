@@ -69,6 +69,10 @@ final class TransferQueueViewModel {
     /// earlier task can become queued again or the array is rearranged.
     private var queuedSearchStart = 0
 
+    /// Local destinations of the downloads being run right now, case-folded
+    /// (see `claimNextQueued`).
+    private var downloadsInFlight: Set<String> = []
+
     /// The running transfer per task id, so `cancel` can interrupt an in-flight
     /// transfer (not just mark it). Cancelling the handle propagates into the
     /// client's read/write loop via `Task.isCancelled`.
@@ -236,12 +240,14 @@ final class TransferQueueViewModel {
         // for one server costs a single login instead of one per file.
         let kept = KeptConnection()
         while let task = claimNextQueued() {
+            let destination = Self.downloadDestinationKey(task)
             // Run the transfer in its own handle so `cancel(task)` can interrupt
             // just this transfer without killing the worker.
             let handle = Task { await processTask(task, kept: kept) }
             transferHandles[task.id] = handle
             await handle.value
             transferHandles.removeValue(forKey: task.id)
+            if let destination { downloadsInFlight.remove(destination) }
         }
         // Stop counting as a worker before logging out: a task enqueued during
         // that round trip would otherwise find the worker limit reached, start
@@ -285,18 +291,38 @@ final class TransferQueueViewModel {
     /// Atomically claim the next queued task. The read and the status write
     /// happen with no `await` in between on the MainActor, so two workers can
     /// never grab the same task.
+    ///
+    /// A download is passed over while another one is writing to the same
+    /// local file, ignoring case: "README" and "readme" are two files on a
+    /// case-sensitive server but one on a Mac's disk, and run together they
+    /// interleave into a single corrupt file. The one passed over runs once
+    /// the first has finished (that worker comes back here), and then meets
+    /// it as an ordinary "file exists" conflict.
     private func claimNextQueued() -> TransferTask? {
-        // Everything before `queuedSearchStart` has already been claimed, so
-        // a long queue isn't rescanned from the top for every task.
+        // Everything before `queuedSearchStart` has already been claimed (or
+        // passed over, see above), so a long queue isn't rescanned from the
+        // top for every task.
         let start = min(queuedSearchStart, tasks.count)
-        guard let index = tasks[start...].firstIndex(where: { $0.status == .queued }) else {
-            queuedSearchStart = tasks.count
-            return nil
+        var firstPassedOver: Int?
+        for index in start..<tasks.count where tasks[index].status == .queued {
+            let task = tasks[index]
+            let destination = Self.downloadDestinationKey(task)
+            if let destination, downloadsInFlight.contains(destination) {
+                firstPassedOver = firstPassedOver ?? index
+                continue
+            }
+            queuedSearchStart = firstPassedOver ?? index + 1
+            if let destination { downloadsInFlight.insert(destination) }
+            task.status = .connecting
+            return task
         }
-        queuedSearchStart = index + 1
-        let task = tasks[index]
-        task.status = .connecting
-        return task
+        queuedSearchStart = firstPassedOver ?? tasks.count
+        return nil
+    }
+
+    private static func downloadDestinationKey(_ task: TransferTask) -> String? {
+        guard task.direction == .download else { return nil }
+        return task.effectiveLocalURL.standardizedFileURL.path.lowercased()
     }
 
     private enum TransferOutcome {
