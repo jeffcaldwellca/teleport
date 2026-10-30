@@ -123,10 +123,10 @@ final class FTPListingTests: XCTestCase {
     }
 
     func test_list_symlink_splitsOffItsTarget() {
-        let link = FTPListingParser.listLine("lrwxrwxrwx 1 u g 9 Jan 15 10:30 current -> release-3", basePath: "/srv")
+        let link = FTPListingParser.listLine("lrwxrwxrwx 1 u g 9 Jan 15 10:30 current -> releases/3", basePath: "/srv")
         XCTAssertEqual(link?.name, "current")
         XCTAssertEqual(link?.isSymlink, true)
-        XCTAssertEqual(link?.symlinkTarget, "release-3")
+        XCTAssertEqual(link?.symlinkTarget, "releases/3")
     }
 
     /// Some servers leave out the group column.

@@ -1377,7 +1377,7 @@ public enum FTPListingParser {
             path: RemotePath.join(basePath, name),
             isDirectory: isDir,
             isSymlink: isSymlink,
-            symlinkTarget: symlinkTarget.flatMap(RemotePath.sanitizedFilename),
+            symlinkTarget: symlinkTarget.flatMap(RemotePath.sanitizedLinkTarget),
             size: Int64(fields[month - 1].text),
             modifiedDate: listDate(String(fields[month].text), String(fields[month + 1].text),
                                    String(fields[month + 2].text)),

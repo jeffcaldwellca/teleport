@@ -41,6 +41,17 @@ public enum RemotePath {
         return name
     }
 
+    /// A symlink's target as listed: a path, so slashes and ".." are fine, but
+    /// the same control and bidirectional-override characters are refused.
+    public static func sanitizedLinkTarget(_ target: String) -> String? {
+        guard !target.isEmpty else { return nil }
+        for scalar in target.unicodeScalars {
+            if scalar.value < 0x20 || scalar.value == 0x7F { return nil }
+            if (0x202A...0x202E).contains(scalar.value) || (0x2066...0x2069).contains(scalar.value) { return nil }
+        }
+        return target
+    }
+
     /// Append `name` to a remote directory path with exactly one separator,
     /// whether or not `parent` already ends in one (`/` root included).
     public static func join(_ parent: String, _ name: String) -> String {
