@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1
 
 ### Fixed
 
@@ -10,6 +10,9 @@
   Touch ID or confirmation prompt before the right one got in. Teleport now
   asks the server about each key first, as OpenSSH does, and signs only with
   the one it accepts.
+- **Closing an SFTP session no longer logs a SwiftNIO error** ("Cannot
+  schedule tasks on an EventLoop that has already shut down"), introduced in
+  1.3.0. It was harmless so far, but later SwiftNIO versions make it a crash.
 
 ## 1.3.0
 
