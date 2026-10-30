@@ -11,6 +11,61 @@
   error 1.)" and a Retry button in place of the file list. The reload now
   runs to the end and another follows once it's done. The local pane's
   reload after downloads had the same problem and is fixed too.
+- **Resuming a paused transfer no longer appends to someone else's file.**
+  A transfer paused before it had sent anything resumed by appending to
+  whatever was already at the destination, without asking. It now starts
+  clean and asks about the existing file first. A download retried after
+  failing to connect likewise no longer replaces an existing file unasked.
+- **Pause while the "file exists" dialog is up pauses the transfer** instead
+  of marking it Skipped, and the question is asked again on resume.
+- **Transfers added just as the queue finished no longer sit in the queue**
+  until something else is added. With one transfer at a time this happened
+  often, and Sync's delete step waited on it.
+- **"Apply to all" no longer carries over to a later, unrelated batch**
+  while a transfer from the earlier one is paused.
+- **Two downloads whose names differ only in case** ("README" and "readme"
+  from a case-sensitive server) no longer run at once into the same local
+  file. The second waits, then asks like any other existing file.
+- **Renaming onto an existing name is refused** instead of silently
+  replacing the other file on the server.
+- **The permissions sheet applies only what you change.** It no longer
+  strips setuid, setgid and sticky bits, no longer sets a folder whose mode
+  the server didn't report to 0644, and no longer sends an ownership change
+  the server rejects when only the mode was edited.
+- **Opening a folder you can't read no longer logs in again.** SFTP and FTP
+  refusals ("permission denied", "no such file") are shown as such, rather
+  than as a dropped connection followed by a full reconnect (and, on 2FA
+  servers, another code prompt). A refused SFTP upload fails straight away
+  instead of retrying.
+- **The browser pane no longer jumps back** when a slow reload finishes
+  after you've already opened another folder, and Retry after a failed
+  navigation records it in history.
+- **FTP:** a listing interrupted after it started no longer leaves every
+  later reply one command behind; file and folder names with repeated or
+  trailing spaces work; Windows/IIS servers without MLSD list their
+  contents instead of showing every folder empty; servers with a Latin-1
+  welcome message connect; folders are seen as existing when checking for
+  conflicts; a timed-out session is detected before a conflict check
+  instead of reading as "no such file".
+- **Modification times on FTP** are no longer read in a Buddhist or
+  Japanese calendar as a year five centuries away.
+- **A damaged known_hosts.json no longer loses every pinned host key.**
+  An unreadable host-key or certificate store is set aside next to the
+  original instead of being written over. Likewise, one damaged saved
+  connection no longer empties the whole list.
+- **Uploading from a volume that disappears mid-transfer** fails the
+  transfer instead of crashing the app.
+- **Copying a large folder within the local pane** no longer freezes the
+  window.
+- **An SSH key typed into the connection editor is used** even after a
+  different key was once picked with Browse.
+- **SFTP sessions that drop are reconnected once,** not torn down twice
+  when two things notice at the same moment.
+- **tport:** `put --resume` and `get --resume` continue a partial file
+  instead of skipping it and exiting 0; `get` into an existing folder (or a
+  path ending in `/`) downloads into it, and `put` to a URL ending in `/`
+  uploads into that folder; `sync --direction down` from an FTP server
+  without MLSD no longer downloads most files again on every run.
 
 ## 1.2.0
 
