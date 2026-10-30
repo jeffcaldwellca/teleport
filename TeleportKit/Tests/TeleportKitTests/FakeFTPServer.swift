@@ -84,20 +84,19 @@ final class FakeFTPServer: @unchecked Sendable {
         set { lock.withLock { _dropControlAfterLogin = newValue } }
     }
 
+    private let acceptLoop: AcceptLoop
+
     init() throws {
         (listenFD, port) = try Self.listen()
-        let fd = listenFD
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let conn = Darwin.accept(fd, nil, nil)
-                guard conn >= 0 else { return }
-                Self.noSigPipe(conn)
-                Thread.detachNewThread { self?.serve(conn) }
-            }
+        acceptLoop = AcceptLoop(listenFD: listenFD)
+        acceptLoop.start { [weak self] conn in
+            guard let self else { Darwin.close(conn); return }
+            Self.noSigPipe(conn)
+            Thread.detachNewThread { self.serve(conn) }
         }
     }
 
-    func stop() { Darwin.close(listenFD) }
+    func stop() { acceptLoop.stop() }
 
     // MARK: - Control connection
 
@@ -199,6 +198,7 @@ final class FakeFTPServer: @unchecked Sendable {
 
     // MARK: - Socket helpers
 
+
     private static func listen() throws -> (fd: Int32, port: Int) {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(.EIO) }
@@ -238,5 +238,43 @@ final class FakeFTPServer: @unchecked Sendable {
             if byte != UInt8(ascii: "\r") { bytes.append(byte) }
         }
         return nil
+    }
+}
+
+/// Accepts connections on a listening socket until stopped.
+///
+/// A thread blocked in accept() isn't woken by closing the socket, and the
+/// next test's fake usually gets the same descriptor number: the old thread
+/// then takes that fake's first connection and, its own fake gone, drops it
+/// (an agent with no keys, an FTP server with no banner). Polling with a
+/// short timeout and checking the stop flag before accepting avoids that.
+final class AcceptLoop: @unchecked Sendable {
+    private let listenFD: Int32
+    private let lock = NSLock()
+    private var stopped = false
+
+    init(listenFD: Int32) { self.listenFD = listenFD }
+
+    func start(_ handle: @escaping @Sendable (Int32) -> Void) {
+        let fd = listenFD
+        Thread.detachNewThread { [self] in
+            while true {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                let ready = poll(&pfd, 1, 50)
+                if lock.withLock({ stopped }) { return }
+                guard ready > 0 else { continue }
+                let conn = Darwin.accept(fd, nil, nil)
+                guard conn >= 0 else { continue }
+                handle(conn)
+            }
+        }
+    }
+
+    /// Stops accepting before the socket is closed, so the descriptor
+    /// number is never accepted on again by this loop.
+    func stop(then cleanup: () -> Void = {}) {
+        lock.withLock { stopped = true }
+        Darwin.close(listenFD)
+        cleanup()
     }
 }

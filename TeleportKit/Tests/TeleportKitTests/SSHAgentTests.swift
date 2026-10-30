@@ -11,6 +11,7 @@ private final class FakeSSHAgent: @unchecked Sendable {
     private var _identities: [(blob: Data, comment: String)] = []
     private var _signature: Data? = Data()
     private var _signRequests: [(key: Data, data: Data)] = []
+    private var acceptLoop: AcceptLoop!
 
     var identities: [(blob: Data, comment: String)] {
         get { lock.withLock { _identities } }
@@ -37,20 +38,15 @@ private final class FakeSSHAgent: @unchecked Sendable {
             }
         }
         guard bound else { throw POSIXError(.EADDRNOTAVAIL) }
-        let fd = listenFD
-        Thread.detachNewThread { [weak self] in
-            while true {
-                let conn = Darwin.accept(fd, nil, nil)
-                guard conn >= 0 else { return }
-                self?.serve(conn)
-                Darwin.close(conn)
-            }
+        acceptLoop = AcceptLoop(listenFD: listenFD)
+        acceptLoop.start { [weak self] conn in
+            self?.serve(conn)
+            Darwin.close(conn)
         }
     }
 
     func stop() {
-        Darwin.close(listenFD)
-        unlink(socketPath)
+        acceptLoop.stop { unlink(socketPath) }
     }
 
     private func serve(_ fd: Int32) {
