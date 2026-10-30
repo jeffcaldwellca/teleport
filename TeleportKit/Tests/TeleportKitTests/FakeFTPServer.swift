@@ -106,7 +106,11 @@ final class FakeFTPServer: @unchecked Sendable {
         Self.send(fd, "220 fake")
         var dataListener: Int32 = -1
         var restOffset = 0
-        defer { if dataListener >= 0 { Darwin.close(dataListener) } }
+        var unreadUploads: [Int32] = []
+        defer {
+            if dataListener >= 0 { Darwin.close(dataListener) }
+            unreadUploads.forEach { Darwin.close($0) }
+        }
 
         while let line = Self.readLine(fd) {
             lock.withLock { _commands.append(line) }
@@ -165,6 +169,12 @@ final class FakeFTPServer: @unchecked Sendable {
                     Self.send(fd, finalReply)
                 }
                 restOffset = 0
+            case "STOR":
+                // Accept the upload's data connection and never read from it,
+                // like a server that has stopped taking data.
+                Self.send(fd, "150 opening")
+                let dataFD = Darwin.accept(dataListener, nil, nil)
+                if dataFD >= 0 { unreadUploads.append(dataFD) }
             case "QUIT":
                 Self.send(fd, "221 bye")
                 return

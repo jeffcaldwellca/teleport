@@ -133,12 +133,13 @@ private final class FTPSocket {
         // EPIPE, not raise SIGPIPE — whose default action kills the process.
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enable, socklen_t(MemoryLayout.size(ofValue: enable)))
 
-        // Bound blocking reads so the transfer loop can check cancellation and
-        // enforce an idle deadline. Sends stay blocking (cancellation is checked
-        // between chunks), which avoids SecureTransport's SSLWrite would-block
-        // complications.
+        // Bound blocking reads and writes so the transfer loops can check
+        // cancellation and enforce an idle deadline. Without the write bound,
+        // a server that stops reading (or a path that silently drops) blocks
+        // send() forever, and neither Cancel nor the stall watchdog can stop it.
         var tv = timeval(tv_sec: Int(Self.recvTick), tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     }
 
     /// Non-blocking connect with a wall-clock timeout, then restores blocking mode.
@@ -304,27 +305,51 @@ private final class FTPSocket {
         try writeRaw(data)
     }
 
+    /// Sends all of `data`. A send that times out (`SO_SNDTIMEO`) is retried
+    /// after checking for cancellation, until nothing has gone out for the
+    /// idle deadline.
     func writeRaw(_ data: Data) throws {
         var offset = 0
-        while offset < data.count {
-            // Sends stay blocking, but bail promptly if the transfer is cancelled.
+        var lastProgress = Date()
+        while true {
             if Task.isCancelled { throw CancellationError() }
             let count = data.count - offset
-            let written: Int
+            var written = 0
+            var pending = false
             if let ctx = ssl {
-                var processed = count
+                var processed = 0
                 let status = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> OSStatus in
-                    SSLWrite(ctx, ptr.baseAddress!.advanced(by: offset), count, &processed)
+                    // Called with nothing left to hand over, SSLWrite only
+                    // flushes what it already encrypted.
+                    SSLWrite(ctx, count > 0 ? ptr.baseAddress!.advanced(by: offset) : nil, count, &processed)
                 }
-                if status != noErr { throw FTPError.transferInterrupted("SSL write \(status)") }
-                written = processed
-            } else {
-                written = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> Int in
+                switch status {
+                case noErr:                       written = processed
+                case OSStatus(errSSLWouldBlock):  written = processed; pending = true
+                default: throw FTPError.transferInterrupted("SSL write \(status)")
+                }
+            } else if count > 0 {
+                let n = data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> Int in
                     Darwin.send(fd, ptr.baseAddress!.advanced(by: offset), count, 0)
                 }
-                if written <= 0 { throw FTPError.transferInterrupted("Socket write error") }
+                if n > 0 {
+                    written = n
+                } else if n < 0, errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR {
+                    pending = true
+                } else {
+                    throw FTPError.transferInterrupted("Socket write error")
+                }
             }
             offset += written
+            // Done once everything is handed over and, under TLS, flushed:
+            // SecureTransport may still hold encrypted bytes after taking all
+            // of ours, and they must go out before the connection is closed.
+            if offset == data.count && !pending { return }
+            if written > 0 {
+                lastProgress = Date()
+            } else if Date().timeIntervalSince(lastProgress) > Self.idleTimeout {
+                throw FTPError.transferInterrupted("Timed out sending data to server")
+            }
         }
     }
 
@@ -392,6 +417,26 @@ private final class FTPSocket {
         var tmp = [UInt8](repeating: 0, count: maxBytes)
         let n = try readAvailable(into: &tmp, max: maxBytes)
         return n == 0 ? nil : Data(tmp[0 ..< n])
+    }
+
+    /// Received but not yet read.
+    var hasBufferedInput: Bool { !readBuf.isEmpty }
+
+    /// The numeric address this socket is connected to.
+    var peerAddress: String? {
+        var storage = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let gotPeer = withUnsafeMutablePointer(to: &storage) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(fd, $0, &length) == 0 }
+        }
+        guard gotPeer else { return nil }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let rc = withUnsafePointer(to: &storage) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getnameinfo($0, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            }
+        }
+        return rc == 0 ? String(cString: host) : nil
     }
 
     // MARK: Close
@@ -569,6 +614,14 @@ public actor FTPClient: RemoteClient {
             guard auth.code == 234 else {
                 throw FTPError.tlsSetupFailed(
                     "Server refused AUTH TLS (\(auth.code) \(auth.message)). Refusing to send credentials over plaintext."
+                )
+            }
+            // Nothing may follow the 234 in plaintext. Bytes already buffered
+            // would be read later as if they had arrived over TLS, letting
+            // someone on the path inject replies to PBSZ, PROT or USER.
+            guard !sock.hasBufferedInput else {
+                throw FTPError.tlsSetupFailed(
+                    "The server sent more data after agreeing to start TLS. Refusing to continue, as this can mean the connection is being tampered with."
                 )
             }
             try startTLS(on: sock)
@@ -1125,8 +1178,17 @@ public actor FTPClient: RemoteClient {
         }
 
         let sock = FTPSocket()
-        try sock.connect(host: connection.host, port: port)
+        try sock.connect(host: dataHost, port: port)
         return sock
+    }
+
+    /// Where data connections go: the address the control connection reached,
+    /// not the hostname looked up again. With round-robin DNS a fresh lookup
+    /// can pick a different server, which knows nothing of this session, and
+    /// an unreachable IPv6 address would cost every data connection the full
+    /// connect timeout before IPv4 was tried.
+    private var dataHost: String {
+        socket?.peerAddress ?? connection.host
     }
 
     private func openPASV() throws -> FTPSocket {
@@ -1142,7 +1204,7 @@ public actor FTPClient: RemoteClient {
         let port = p1 * 256 + p2
         // Use the control-channel host (ignores server's PASV IP — common NAT workaround)
         let sock = FTPSocket()
-        try sock.connect(host: connection.host, port: port)
+        try sock.connect(host: dataHost, port: port)
         return sock
     }
 

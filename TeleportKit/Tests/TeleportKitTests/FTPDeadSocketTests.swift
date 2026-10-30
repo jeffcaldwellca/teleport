@@ -105,4 +105,24 @@ final class FTPDeadSocketTests: XCTestCase {
         XCTAssertTrue(folder)
         XCTAssertFalse(missing)
     }
+
+    /// A server that stops reading fills the socket's send buffer, and a send
+    /// with no timeout then blocks for good: Cancel must still stop it.
+    func test_cancellingAnUploadTheServerStoppedReading_stopsIt() async throws {
+        let local = FileManager.default.temporaryDirectory.appending(component: "ftp-stalled-\(UUID().uuidString)")
+        try Data(count: 32 * 1024 * 1024).write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+        let client = FTPClient(
+            connection: Connection(host: "127.0.0.1", port: server.port, username: "test", connectionProtocol: .ftp),
+            password: "", dedicatedToTransfers: true
+        )
+        try await client.connect()
+
+        let upload = Task { try await client.upload(from: local, remotePath: "/big.bin", resume: false) { _, _ in } }
+        try await Task.sleep(for: .seconds(1))
+        let cancelledAt = Date()
+        upload.cancel()
+        _ = try? await upload.value
+        XCTAssertLessThan(Date().timeIntervalSince(cancelledAt), 10, "Cancel should take effect within a send-timeout tick")
+    }
 }
