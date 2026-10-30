@@ -344,6 +344,12 @@ struct SSHConnectionStateMachine {
                 self.state = .userAuthentication(state)
                 return result
 
+            case .userAuthPKOK(let message):
+                // Teleport patch: answer to a public key query.
+                let result = try state.receiveUserAuthPKOK(message)
+                self.state = .userAuthentication(state)
+                return result
+
             case .userAuthInfoResponse(let message):
                 // Teleport patch.
                 let result = try state.receiveUserAuthInfoResponse(message)

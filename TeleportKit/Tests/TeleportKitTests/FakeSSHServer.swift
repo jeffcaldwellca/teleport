@@ -17,9 +17,14 @@ final class FakeSSHServer {
         case partialSuccess(remaining: NIOSSHAvailableUserAuthenticationMethods)
     }
 
-    private final class AuthDelegate: NIOSSHServerUserAuthenticationDelegate {
+    private final class AuthDelegate: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
         let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods
         private let reply: Reply
+        private let lock = NSLock()
+        private var _requests = 0
+        /// Authentication requests answered (public key queries aren't:
+        /// SwiftNIO SSH answers those itself).
+        var requests: Int { lock.withLock { _requests } }
 
         init(accepts: NIOSSHAvailableUserAuthenticationMethods, reply: Reply) {
             self.supportedAuthenticationMethods = accepts
@@ -30,6 +35,7 @@ final class FakeSSHServer {
             request: NIOSSHUserAuthenticationRequest,
             responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>
         ) {
+            lock.withLock { _requests += 1 }
             switch reply {
             case .accept:                           responsePromise.succeed(.success)
             case .reject:                           responsePromise.succeed(.failure)
@@ -39,6 +45,9 @@ final class FakeSSHServer {
     }
 
     let port: Int
+    private let authDelegate: AuthDelegate
+    /// Authentication requests the server has answered.
+    var authenticationRequests: Int { authDelegate.requests }
     private let group: MultiThreadedEventLoopGroup
     private let listener: Channel
 
@@ -53,9 +62,10 @@ final class FakeSSHServer {
         transportProtectionSchemes: [NIOSSHTransportProtection.Type]? = nil
     ) throws {
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        authDelegate = AuthDelegate(accepts: accepts, reply: reply)
         var configuration = SSHServerConfiguration(
             hostKeys: [NIOSSHPrivateKey(ed25519Key: .init())],
-            userAuthDelegate: AuthDelegate(accepts: accepts, reply: reply)
+            userAuthDelegate: authDelegate
         )
         if let transportProtectionSchemes {
             configuration.transportProtectionSchemes = transportProtectionSchemes

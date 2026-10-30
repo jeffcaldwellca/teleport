@@ -414,8 +414,14 @@ public actor SFTPClient: RemoteClient {
         var credentials: [Credential] = []
         if connection.useSSHAgent, let agent {
             // An agent that can't be reached contributes nothing; it doesn't
-            // stop the connection.
-            credentials += agent.privateKeys(limit: Self.agentKeyLimit).map { .ready(.privateKey(.init(privateKey: $0))) }
+            // stop the connection. Each key is offered without a signature
+            // first, and signed with only if the server says it would take
+            // it: signing can mean a Touch ID or confirmation prompt
+            // (1Password, Secretive, `ssh-add -c`), which keys the server
+            // doesn't know must never cost the user.
+            credentials += agent.privateKeys(limit: Self.agentKeyLimit).map {
+                .ready(.privateKey(.init(privateKey: $0, queryFirst: true)))
+            }
         }
         // If the user configured a key path, the password is never offered.
         // Silently falling back to password auth is dangerous — it leaks

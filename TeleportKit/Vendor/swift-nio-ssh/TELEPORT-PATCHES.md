@@ -55,3 +55,31 @@ Servers that take passwords through PAM, and two-factor
 
 Covered by `KeyboardInteractiveMessageTests` (wire format) and
 `SFTPClientKeyboardInteractiveTests` (end to end) in TeleportKit's test target.
+
+## Patch: ask before signing (public key queries, RFC 4252 section 7)
+
+Upstream's client signs every public key it offers, straight away. With keys
+held by an agent that asks the user before each signature (1Password,
+Secretive, `ssh-add -c`), every agent key costs a Touch ID or confirmation
+prompt, including the ones the server will turn down.
+
+- `NIOSSHUserAuthenticationOffer.Offer.PrivateKey.queryFirst` (default
+  false) and `init(privateKey:queryFirst:)`. Such an offer is first sent
+  without a signature.
+- Client state machine: the outstanding query is kept in a
+  `PublicKeyQuerySlot` shared by copies of the state machine. On
+  `SSH_MSG_USERAUTH_PK_OK`, the key signs and the signed request goes out
+  while the request stays outstanding; `sendUserAuthRequest` allows that one
+  extra request. Only the algorithm in PK_OK is checked against the query:
+  our key may be a custom type whose re-encoding needn't match the server's
+  byte for byte, and signing proves our key only to the server that asked.
+  PK_OK of another algorithm, or with no query out, fails the connection. A FAILURE ends the query as usual, and the
+  delegate is asked for the next offer.
+- `SSHConnectionStateMachine` passes an incoming PK_OK to
+  `AcceptsUserAuthMessages.receiveUserAuthPKOK`.
+
+Teleport offers ssh-agent keys this way (`SFTPClient.buildCredentials`).
+Covered by `SFTPClientAgentQueryTests` in TeleportKit's test target, against
+OpenSSH's sshd (only the key it accepts is signed with) and against
+SwiftNIO SSH's own server.
+

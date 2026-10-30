@@ -225,9 +225,23 @@ public extension NIOSSHUserAuthenticationOffer.Offer {
         public var privateKey: NIOSSHPrivateKey
         public var publicKey: NIOSSHPublicKey
 
+        /// Teleport patch: ask the server whether it would accept this key
+        /// before signing anything with it (RFC 4252 section 7: a request
+        /// without a signature, answered by SSH_MSG_USERAUTH_PK_OK or
+        /// FAILURE). Signing then happens only for a key the server has
+        /// agreed to, which matters when signing involves the user, as with
+        /// keys held by an agent that asks for Touch ID or confirmation.
+        public var queryFirst: Bool = false
+
         public init(privateKey: NIOSSHPrivateKey) {
             self.privateKey = privateKey
             self.publicKey = privateKey.publicKey
+        }
+
+        /// Teleport patch: see `queryFirst`.
+        public init(privateKey: NIOSSHPrivateKey, queryFirst: Bool) {
+            self.init(privateKey: privateKey)
+            self.queryFirst = queryFirst
         }
 
         /// Creates a private key offer with a certified public key.
@@ -260,6 +274,9 @@ extension SSHMessage.UserAuthRequestMessage {
         self.service = "ssh-connection"
 
         switch request.offer {
+        case .privateKey(let privateKeyRequest) where privateKeyRequest.queryFirst:
+            // Teleport patch: the query; the signed request follows PK_OK.
+            self.method = .publicKey(.known(key: privateKeyRequest.publicKey, signature: nil))
         case .privateKey(let privateKeyRequest):
             let dataToSign = UserAuthSignablePayload(
                 sessionIdentifier: sessionID,

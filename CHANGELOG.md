@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **ssh-agent keys are only used once the server says it will accept them.**
+  Each agent key was signed with as soon as it was offered, so with
+  1Password, Secretive or `ssh-add -c`, every key in the agent could cost a
+  Touch ID or confirmation prompt before the right one got in. Teleport now
+  asks the server about each key first, as OpenSSH does, and signs only with
+  the one it accepts.
+
 ## 1.3.0
 
 ### New

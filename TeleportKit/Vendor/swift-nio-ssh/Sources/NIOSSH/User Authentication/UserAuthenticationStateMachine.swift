@@ -41,6 +41,18 @@ struct UserAuthenticationStateMachine {
         }
     }
 
+    /// Teleport patch: the outstanding public key query (client): the offer
+    /// that was sent without a signature, to be signed and sent again once
+    /// the server answers PK_OK. A reference for the same reason as above.
+    private let publicKeyQuery = PublicKeyQuerySlot()
+
+    final class PublicKeyQuerySlot {
+        var pending: NIOSSHUserAuthenticationOffer?
+        /// PK_OK arrived: the signed request may go out while the state
+        /// machine is still waiting for a response.
+        var signedRequestDue = false
+    }
+
     /// Teleport patch: the user a keyboard-interactive login is for (server).
     var keyboardInteractiveUsername: String? {
         self.keyboardInteractive.serverUsername
@@ -202,6 +214,9 @@ extension UserAuthenticationStateMachine {
         case (.client(let delegate), .awaitingResponses(let responseCount)):
             // Ok, the server didn't like that much. Let's try another one.
             self.state = .awaitingNextRequest
+            // Teleport patch: a refused query (or signed request) is over.
+            self.publicKeyQuery.pending = nil
+            self.publicKeyQuery.signedRequestDue = false
             precondition(responseCount == 1, "We don't support parallel authentication attempts yet!")
             return self.requestNextAuthRequest(methods: .init(message), partialSuccess: message.partialSuccess, delegate: delegate)
         case (.client, .authenticationSucceeded):
@@ -216,6 +231,33 @@ extension UserAuthenticationStateMachine {
         case (.server, _):
             // Servers may never receive user auth failure messages.
             throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "client sent user auth failure")
+        }
+    }
+
+    /// Teleport patch: the server would accept the key just queried (client).
+    /// Sign with it and send the real request, which stays outstanding.
+    mutating func receiveUserAuthPKOK(_ message: SSHMessage.UserAuthPKOKMessage) throws -> EventLoopFuture<SSHMessage.UserAuthRequestMessage>? {
+        switch (self.delegate, self.state) {
+        case (.client, .awaitingResponses):
+            guard let pending = self.publicKeyQuery.pending, case .privateKey(var key) = pending.offer else {
+                throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "PK_OK without a public key query")
+            }
+            guard key.publicKey.keyPrefix.elementsEqual(message.key.keyPrefix) else {
+                throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "PK_OK for a key that wasn't queried")
+            }
+            self.publicKeyQuery.pending = nil
+            self.publicKeyQuery.signedRequestDue = true
+            key.queryFirst = false
+            let signed = NIOSSHUserAuthenticationOffer(username: pending.username, serviceName: "", offer: .privateKey(key))
+            return self.loop.makeSucceededVoidFuture().flatMapThrowing { [sessionID = self.sessionID] in
+                try SSHMessage.UserAuthRequestMessage(request: signed, sessionID: sessionID)
+            }
+        case (.client, .authenticationSucceeded):
+            return nil
+        case (.client, _):
+            throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "unsolicited PK_OK")
+        case (.server, _):
+            throw NIOSSHError.protocolViolation(protocolName: Self.protocolName, violation: "client sent PK_OK")
         }
     }
 
@@ -322,6 +364,9 @@ extension UserAuthenticationStateMachine {
         switch (self.delegate, self.state) {
         case (.client, .awaitingNextRequest):
             self.state = .awaitingResponses(1)
+        case (.client, .awaitingResponses) where self.publicKeyQuery.signedRequestDue:
+            // Teleport patch: the signed request after PK_OK; still one outstanding.
+            self.publicKeyQuery.signedRequestDue = false
         case (.client, .idle),
              (.client, .awaitingServiceAcceptance):
             preconditionFailure("Sent an auth request without asking us first")
@@ -490,12 +535,19 @@ private extension UserAuthenticationStateMachine {
 
         // The explicit capture list is here to force a copy of the buffer, rather than capturing self.
         let keyboardInteractive = self.keyboardInteractive
+        let publicKeyQuery = self.publicKeyQuery
         return promise.futureResult.flatMapThrowing { [sessionID = self.sessionID] request in
             // Teleport patch: keep the responder for the challenges to come.
             if case .keyboardInteractive(let offer)? = request?.offer {
                 keyboardInteractive.responder = offer.responder
             } else {
                 keyboardInteractive.responder = nil
+            }
+            // Teleport patch: remember a query, to sign it once PK_OK arrives.
+            if case .privateKey(let key)? = request?.offer, key.queryFirst {
+                publicKeyQuery.pending = request
+            } else {
+                publicKeyQuery.pending = nil
             }
             return try request.map { try SSHMessage.UserAuthRequestMessage(request: $0, sessionID: sessionID) }
         }

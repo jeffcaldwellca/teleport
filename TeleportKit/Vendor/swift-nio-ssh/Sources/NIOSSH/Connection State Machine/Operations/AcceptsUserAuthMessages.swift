@@ -101,6 +101,15 @@ extension AcceptsUserAuthMessages {
         return .event(NIOUserAuthBannerEvent(message: message.message, languageTag: message.languageTag))
     }
 
+    /// Teleport patch: the server would accept the key just queried; the
+    /// signed request goes out in reply.
+    mutating func receiveUserAuthPKOK(_ message: SSHMessage.UserAuthPKOKMessage) throws -> SSHConnectionStateMachine.StateMachineInboundProcessResult {
+        if let future = try self.userAuthStateMachine.receiveUserAuthPKOK(message) {
+            return .possibleFutureMessage(future.map { SSHMultiMessage(.userAuthRequest($0)) })
+        }
+        return .noMessage
+    }
+
     /// Teleport patch.
     mutating func receiveUserAuthInfoRequest(_ message: SSHMessage.UserAuthInfoRequestMessage) throws -> SSHConnectionStateMachine.StateMachineInboundProcessResult {
         if let future = try self.userAuthStateMachine.receiveUserAuthInfoRequest(message) {

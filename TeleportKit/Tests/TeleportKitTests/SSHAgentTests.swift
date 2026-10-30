@@ -4,7 +4,7 @@ import Darwin
 
 /// A scripted ssh-agent on a Unix socket: answers the two requests the
 /// client makes and records what it was asked to sign.
-private final class FakeSSHAgent: @unchecked Sendable {
+final class FakeSSHAgent: @unchecked Sendable {
     let socketPath: String
     private let listenFD: Int32
     private let lock = NSLock()
@@ -23,6 +23,13 @@ private final class FakeSSHAgent: @unchecked Sendable {
         set { lock.withLock { _signature = newValue } }
     }
     var signRequests: [(key: Data, data: Data)] { lock.withLock { _signRequests } }
+    /// Signs for real when set: given the key blob and the data, the
+    /// signature blob to return (nil answers SSH_AGENT_FAILURE).
+    var signer: (@Sendable (Data, Data) -> Data?)? {
+        get { lock.withLock { _signer } }
+        set { lock.withLock { _signer = newValue } }
+    }
+    private var _signer: (@Sendable (Data, Data) -> Data?)?
 
     init() throws {
         socketPath = "/tmp/tp-agent-\(UUID().uuidString.prefix(8)).sock"
@@ -66,7 +73,14 @@ private final class FakeSSHAgent: @unchecked Sendable {
             var rest = message.dropFirst()
             let key = Self.takeString(&rest), data = Self.takeString(&rest)
             lock.withLock { _signRequests.append((key, data)) }
-            if let signature {
+            if let signer {
+                if let blob = signer(key, data) {
+                    reply.append(14)
+                    reply.append(Self.string(blob))
+                } else {
+                    reply.append(5)
+                }
+            } else if let signature {
                 reply.append(14)
                 reply.append(Self.string(signature))
             } else {
