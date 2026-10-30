@@ -471,10 +471,17 @@ public actor SFTPClient: RemoteClient {
     // MARK: - Disconnect
 
     public func disconnect() async {
-        try? await sftp?.close()
-        try? await ssh?.close()
-        sftp = nil
-        ssh = nil
+        let sftp = self.sftp, ssh = self.ssh
+        self.sftp = nil
+        self.ssh = nil
+        // Closing politely waits on the server. One that has stopped answering
+        // mustn't hold the disconnect up (the transfer queue disconnects after
+        // a stalled transfer); shutting the event loop down closes the socket
+        // either way.
+        await waitAtMost(.seconds(3), for: Task {
+            try? await sftp?.close()
+            try? await ssh?.close()
+        })
         await eventLoopGroup.shutdown()
     }
 
@@ -577,7 +584,7 @@ public actor SFTPClient: RemoteClient {
                     nextRequest += UInt64(chunkSize)
                 }
                 guard !inFlight.isEmpty else { break }       // everything requested and written
-                var buf = try await inFlight.removeFirst().value
+                var buf = try await valueUnlessCancelled(inFlight.removeFirst())
                 guard buf.readableBytes > 0 else { break }   // EOF
                 let chunk = buf.readData(length: buf.readableBytes) ?? Data()
                 try fh.write(contentsOf: chunk)   // throwing write: disk-full must fail the transfer
@@ -606,8 +613,12 @@ public actor SFTPClient: RemoteClient {
             try fh.close()
             try DownloadStaging.commit(to: localURL)
         } catch {
-            try? await file.close()
-            await closeExtraReadChannels(extras)
+            if Task.isCancelled {
+                abandon(extras)
+            } else {
+                try? await file.close()
+                await closeExtraReadChannels(extras)
+            }
             DownloadStaging.discardEmptyPartial(for: localURL)
             throw error
         }
@@ -630,6 +641,17 @@ public actor SFTPClient: RemoteClient {
             channels.append((client, file))
         }
         return channels
+    }
+
+    /// After a cancel: closing a file is a request, and the server may be the
+    /// reason for cancelling, so don't wait on it (or queue more requests
+    /// behind it that would land after the connection is shut). Dropping the
+    /// extra channels releases their handles on the server; the main file's
+    /// handle goes with the session.
+    private func abandon(_ channels: [ReadChannel]) {
+        for channel in channels {
+            Task { try? await channel.client.close() }
+        }
     }
 
     private func closeExtraReadChannels(_ channels: [ReadChannel]) async {
@@ -731,14 +753,14 @@ public actor SFTPClient: RemoteClient {
                 inFlight.append((offset, Task { try await file.write(buf, at: at) }))
                 if inFlight.count >= Self.pipelineDepth {
                     let oldest = inFlight.removeFirst()
-                    try await oldest.write.value
+                    try await valueUnlessCancelled(oldest.write)
                     progress(Int64(oldest.end), total)
                 }
             }
             while !inFlight.isEmpty {
                 try Task.checkCancellation()
                 let oldest = inFlight.removeFirst()
-                try await oldest.write.value
+                try await valueUnlessCancelled(oldest.write)
                 progress(Int64(oldest.end), total)
             }
             try await file.close()
@@ -754,7 +776,7 @@ public actor SFTPClient: RemoteClient {
                 )
             }
         } catch {
-            try? await file.close()
+            if !Task.isCancelled { try? await file.close() }   // see `abandon(_:)`
             throw error
         }
     }
@@ -879,6 +901,75 @@ private final class OwnedEventLoopGroup: @unchecked Sendable {
 
     deinit {
         group?.shutdownGracefully { _ in }
+    }
+}
+
+// MARK: - Abandoning a request
+
+/// Waits for `task` unless the caller is cancelled first, in which case it
+/// throws `CancellationError` at once and leaves `task` behind.
+///
+/// Citadel's requests wait on NIO futures, which don't respond to task
+/// cancellation. A read or write the server never answers (a stalled server,
+/// a black-holed path) would otherwise hold Cancel, Pause and the transfer
+/// queue's stall watchdog until TCP gave up, which might be never. What's
+/// left behind ends when its channel is closed.
+func valueUnlessCancelled<T: Sendable>(_ task: Task<T, Error>) async throws -> T {
+    let race = FirstResult<T>()
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            race.attach(continuation)
+            Task {
+                do { race.finish(.success(try await task.value)) } catch { race.finish(.failure(error)) }
+            }
+        }
+    } onCancel: {
+        task.cancel()
+        race.finish(.failure(CancellationError()))
+    }
+}
+
+/// Waits for `task`, but no longer than `limit`.
+func waitAtMost(_ limit: Duration, for task: Task<Void, Never>) async {
+    let race = FirstResult<Void>()
+    _ = try? await withCheckedThrowingContinuation { continuation in
+        race.attach(continuation)
+        Task { await task.value; race.finish(.success(())) }
+        Task { try? await Task.sleep(for: limit); race.finish(.success(())) }
+    }
+}
+
+/// Resumes a continuation with whichever result arrives first, whether that
+/// is before or after the continuation itself is attached.
+private final class FirstResult<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+    private var early: Result<T, Error>?
+    private var settled = false
+
+    func attach(_ continuation: CheckedContinuation<T, Error>) {
+        lock.lock()
+        if let early {
+            lock.unlock()
+            continuation.resume(with: early)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func finish(_ result: Result<T, Error>) {
+        lock.lock()
+        guard !settled else { lock.unlock(); return }
+        settled = true
+        if let continuation {
+            self.continuation = nil
+            lock.unlock()
+            continuation.resume(with: result)
+        } else {
+            early = result
+            lock.unlock()
+        }
     }
 }
 
