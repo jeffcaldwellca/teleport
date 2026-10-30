@@ -64,7 +64,13 @@ final class TransferTask: Identifiable {
     var effectiveLocalURL: URL
     var effectiveRemotePath: String
 
-    var status: TransferStatus = .queued
+    var status: TransferStatus = .queued {
+        didSet { if status != oldValue { onStatusChange?(oldValue, status) } }
+    }
+
+    /// Set by the queue holding the task, to keep its per-status counts
+    /// current without rescanning every task.
+    @ObservationIgnored var onStatusChange: ((TransferStatus, TransferStatus) -> Void)?
 
     /// Set by `pause()` before cancelling the in-flight transfer, so the
     /// cancellation handler lands the task in `.paused` instead of `.cancelled`.

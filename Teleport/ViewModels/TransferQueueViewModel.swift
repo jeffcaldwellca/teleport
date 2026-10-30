@@ -49,7 +49,7 @@ final class ProgressThrottle: @unchecked Sendable {
 @MainActor
 final class TransferQueueViewModel {
 
-    var tasks: [TransferTask] = []
+    private(set) var tasks: [TransferTask] = []
     var isVisible = false
 
     /// Set when a task detects a file conflict and pauses for user input.
@@ -141,7 +141,7 @@ final class TransferQueueViewModel {
             remotePath: remotePath
         )
         task.conflictBehavior = conflictBehavior
-        tasks.append(task)
+        add(task)
         setVisible(true)
         startWorkers()
         return task
@@ -174,7 +174,7 @@ final class TransferQueueViewModel {
                 localURL: item.local, remotePath: item.remote
             )
             task.conflictBehavior = conflictBehavior
-            tasks.append(task)
+            add(task)
             created.append(task)
         }
         setVisible(true)
@@ -217,12 +217,10 @@ final class TransferQueueViewModel {
     private var summarizedTaskIDs: Set<UUID> = []
 
     /// Anything not yet finished, paused transfers included — quitting loses them.
-    var hasUnfinishedTransfers: Bool { tasks.contains { !$0.status.isFinal } }
+    var hasUnfinishedTransfers: Bool { counts.total > counts.finished }
 
     /// Transfers still queued or running (the Dock badge).
-    var remainingCount: Int {
-        tasks.reduce(0) { $0 + (($1.status.isFinal || $1.status == .paused) ? 0 : 1) }
-    }
+    var remainingCount: Int { counts.total - counts.finished - counts.paused }
 
     private func reportIdleIfDrained() {
         guard workerCount == 0, !tasks.contains(where: { $0.status == .queued }) else { return }
@@ -802,6 +800,10 @@ final class TransferQueueViewModel {
         for task in tasks {
             if case .failed = task.status { discardPartial(task) }
         }
+        for task in tasks where task.status.isFinal {
+            task.onStatusChange = nil
+            counts.remove(task.status)
+        }
         tasks.removeAll { $0.status.isFinal }
         queuedSearchStart = 0
     }
@@ -841,16 +843,55 @@ final class TransferQueueViewModel {
 
     func removeAll() {
         cancelAll()
+        tasks.forEach { $0.onStatusChange = nil }
         tasks.removeAll()
+        counts = StatusCounts()
         queuedSearchStart = 0
     }
 
     // MARK: - Stats
 
-    var activeCount: Int  { tasks.filter { $0.status == .active }.count }
-    var queuedCount: Int  { tasks.filter { $0.status == .queued }.count }
-    var failedCount: Int  { tasks.filter { if case .failed = $0.status { return true }; return false }.count }
-    var hasActiveTasks: Bool { activeCount + queuedCount > 0 }
+    var activeCount: Int  { counts.active }
+    var queuedCount: Int  { counts.queued }
+    var failedCount: Int  { counts.failed }
+    var hasFinishedTasks: Bool { counts.finished > 0 }
+    var hasActiveTasks: Bool { counts.active + counts.queued > 0 }
+
+    /// How many tasks are in each state, kept current as statuses change
+    /// (`add`, `TransferTask.onStatusChange`). The queue header, toolbar and
+    /// Dock badge read these on every update; counting by scanning the tasks
+    /// instead made each one depend on every task's status, so in a folder
+    /// transfer of thousands of files any single change re-ran several
+    /// full scans.
+    struct StatusCounts {
+        var total = 0, active = 0, queued = 0, failed = 0, paused = 0, finished = 0
+
+        mutating func add(_ status: TransferStatus, _ delta: Int = 1) {
+            total += delta
+            switch status {
+            case .active: active += delta
+            case .queued: queued += delta
+            case .paused: paused += delta
+            case .failed: failed += delta
+            default: break
+            }
+            if status.isFinal { finished += delta }
+        }
+
+        mutating func remove(_ status: TransferStatus) { add(status, -1) }
+    }
+
+    private(set) var counts = StatusCounts()
+
+    private func add(_ task: TransferTask) {
+        tasks.append(task)
+        counts.add(task.status)
+        task.onStatusChange = { [weak self] old, new in
+            guard let self else { return }
+            self.counts.remove(old)
+            self.counts.add(new)
+        }
+    }
 
     // MARK: - Helpers
 
@@ -952,7 +993,7 @@ final class TransferQueueViewModel {
             localURL: localURL,
             remotePath: remotePath
         )
-        tasks.append(task)
+        add(task)
         setVisible(true)
         task.status = .active
         task.start()

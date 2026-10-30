@@ -42,7 +42,7 @@ struct TransferQueueView: View {
                     .font(.caption)
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .disabled(queue.tasks.filter(\.status.isFinal).isEmpty)
+                    .disabled(!queue.hasFinishedTasks)
                     .help("Remove completed, failed, and cancelled transfers")
 
                 Button {
