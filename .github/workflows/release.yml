@@ -158,7 +158,16 @@ jobs:
       - name: Staple notarization ticket
         env:
           DMG_PATH: ${{ steps.dmg.outputs.PATH }}
-        run: xcrun stapler staple "$DMG_PATH"
+        # The ticket is fetched from Apple's CloudKit service, which can drop
+        # the connection or not have the record yet right after acceptance
+        # (v1.3.1's first run failed with error 68 that way). Try a few times.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            xcrun stapler staple "$DMG_PATH" && exit 0
+            echo "::warning::Stapling failed (attempt $attempt), retrying in 30 s"
+            sleep 30
+          done
+          exit 1
 
       # ── GitHub Release ─────────────────────────────────────────────────────
 
