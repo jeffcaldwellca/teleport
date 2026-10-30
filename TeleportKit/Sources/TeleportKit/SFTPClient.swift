@@ -698,7 +698,10 @@ public actor SFTPClient: RemoteClient {
 
             while true {
                 try Task.checkCancellation()
-                let chunk = fh.readData(ofLength: chunkSize)
+                // Throwing read: readData(ofLength:) raises an Objective-C exception
+                // on an I/O error (a USB or network volume gone mid-upload), which
+                // Swift can't catch and which takes the whole app down.
+                let chunk = try fh.read(upToCount: chunkSize) ?? Data()
                 if chunk.isEmpty { break }
                 let buf = allocator.buffer(bytes: chunk)
                 let at = offset

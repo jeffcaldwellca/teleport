@@ -875,7 +875,7 @@ public actor FTPClient: RemoteClient {
         progress(sent, total)
         while true {
             try Task.checkCancellation()
-            let chunk = fh.readData(ofLength: 65536)
+            let chunk = try fh.read(upToCount: 65536) ?? Data()   // throwing read; see SFTPClient.upload
             if chunk.isEmpty { break }
             try dataSock.writeRaw(chunk)
             sent += Int64(chunk.count)
