@@ -1,5 +1,5 @@
 import XCTest
-import TeleportKit
+@testable import TeleportKit
 
 /// Directory listings against a scripted server without MLSD, plus the pure
 /// `LIST` date parser.
@@ -157,5 +157,23 @@ final class FTPListingTests: XCTestCase {
         let client = try await connectedClient()
         let items = try await client.listDirectory(at: "/")
         XCTAssertEqual(items.map(\.name), ["notes "])
+    }
+
+    // MARK: - Names that aren't UTF-8
+
+    func test_nonUTF8Name_goesBackOutAsTheSameBytes() {
+        let latin1 = Data([0x63, 0x61, 0x66, 0xE9])                   // "café" in Latin-1
+        let name = FTPNameEncoding.decode(latin1)
+        XCTAssertTrue(name.hasPrefix("caf"))
+        XCTAssertEqual(FTPNameEncoding.encode(name), latin1)
+    }
+
+    func test_UTF8Names_areUnchanged_evenNextToANonUTF8One() {
+        let listing = Data("-rw-r--r-- 1 u g 5 Jan 15 2024 café\r\n".utf8)
+            + Data("-rw-r--r-- 1 u g 5 Jan 15 2024 caf".utf8) + Data([0xE9]) + Data("\r\n".utf8)
+        let names = FTPListingParser.lines(of: listing).compactMap { FTPListingParser.listLine($0, basePath: "/")?.name }
+        XCTAssertEqual(names.first, "café")
+        XCTAssertEqual(FTPNameEncoding.encode(names[1]), Data([0x63, 0x61, 0x66, 0xE9]))
+        XCTAssertEqual(FTPNameEncoding.encode("RETR /café"), Data("RETR /café".utf8))
     }
 }

@@ -301,8 +301,7 @@ private final class FTPSocket {
     // MARK: Write
 
     func writeLine(_ s: String) throws {
-        guard let data = (s + "\r\n").data(using: .utf8) else { return }
-        try writeRaw(data)
+        try writeRaw(FTPNameEncoding.encode(s + "\r\n"))
     }
 
     /// Sends all of `data`. A send that times out (`SO_SNDTIMEO`) is retried
@@ -407,9 +406,9 @@ private final class FTPSocket {
             if b == UInt8(ascii: "\n") { break }
             if b != UInt8(ascii: "\r") { line.append(b) }
         }
-        // Servers that predate UTF-8 send banners and messages in Latin-1;
-        // decoding those to "" would fail the reply-code check.
-        return String(data: line, encoding: .utf8) ?? String(data: line, encoding: .isoLatin1) ?? ""
+        // Not necessarily UTF-8: a Latin-1 banner, or a 257 reply naming a
+        // folder in the server's own encoding (see FTPNameEncoding).
+        return FTPNameEncoding.decode(line)
     }
 
     /// Read a chunk of data. Returns nil when the remote side closes the connection.
@@ -710,8 +709,7 @@ public actor FTPClient: RemoteClient {
 
     private func mlsdSync(path: String) throws -> [FileItem] {
         let data = try openDataConnectionAndRun(command: "MLSD \(path)")
-        guard let text = String(data: data, encoding: .utf8) else { throw FTPError.listingFailed("Non-UTF8") }
-        return FTPListingParser.lines(of: text)
+        return FTPListingParser.lines(of: data)
             .compactMap { FTPListingParser.mlsdLine($0, basePath: path) }
             .filter { $0.name != "." && $0.name != ".." }
     }
@@ -742,10 +740,7 @@ public actor FTPClient: RemoteClient {
 
     private func listLines(command: String) throws -> [String] {
         let data = try openDataConnectionAndRun(command: command)
-        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            throw FTPError.listingFailed("Could not decode listing")
-        }
-        return FTPListingParser.lines(of: text)
+        return FTPListingParser.lines(of: data)
     }
 
     private static func parseListLines(_ lines: [String], basePath: String) -> [FileItem] {
@@ -1210,6 +1205,68 @@ public actor FTPClient: RemoteClient {
 
 }
 
+// MARK: - Name encoding
+
+/// FTP sends names as bytes, in whatever encoding the server's files use.
+/// Most are UTF-8; older servers use Latin-1, Windows-1252, Shift-JIS and
+/// the like. Reading those as Latin-1 (as this client once did) gave names
+/// that went back out as different bytes, so the file couldn't be opened,
+/// renamed or deleted, and one such name turned the rest of its folder into
+/// mojibake.
+///
+/// Instead, valid UTF-8 is read as such, and each byte that isn't is kept as
+/// the private-use character U+F700 + byte (U+F780...U+F7FF), which `encode`
+/// turns back into that same byte. Names round-trip exactly, whatever the
+/// server's encoding; the cost is that those bytes show as placeholder
+/// glyphs. (A real name containing one of those private-use characters
+/// would not survive, which is far less likely.)
+public enum FTPNameEncoding {
+    private static let escapeBase: UInt32 = 0xF700
+    private static let escaped: ClosedRange<UInt32> = 0xF780...0xF7FF
+
+    public static func decode<Bytes: Collection>(_ bytes: Bytes) -> String where Bytes.Element == UInt8 {
+        let bytes = Array(bytes)
+        if let text = String(bytes: bytes, encoding: .utf8) { return text }
+        var scalars = String.UnicodeScalarView()
+        var index = 0
+        while index < bytes.count {
+            let length = sequenceLength(bytes[index])
+            if length > 0, index + length <= bytes.count,
+               let decoded = String(bytes: bytes[index..<index + length], encoding: .utf8) {
+                scalars.append(contentsOf: decoded.unicodeScalars)
+                index += length
+            } else {
+                scalars.append(Unicode.Scalar(escapeBase + UInt32(bytes[index]))!)
+                index += 1
+            }
+        }
+        return String(scalars)
+    }
+
+    public static func encode(_ text: String) -> Data {
+        var data = Data()
+        for scalar in text.unicodeScalars {
+            if escaped.contains(scalar.value) {
+                data.append(UInt8(scalar.value - escapeBase))
+            } else {
+                data.append(contentsOf: Array(String(scalar).utf8))
+            }
+        }
+        return data
+    }
+
+    /// Length of the UTF-8 sequence `lead` starts, or 0 if it can't start one.
+    private static func sequenceLength(_ lead: UInt8) -> Int {
+        switch lead {
+        case 0x00...0x7F: return 1
+        case 0xC2...0xDF: return 2
+        case 0xE0...0xEF: return 3
+        case 0xF0...0xF4: return 4
+        default:          return 0
+        }
+    }
+}
+
 // MARK: - Listing Parsers
 
 /// Pure parsers for FTP directory listings, separated from the `FTPClient`
@@ -1272,9 +1329,9 @@ public enum FTPListingParser {
 
     /// The lines of a listing, with line endings removed but nothing else:
     /// trailing spaces belong to the name on the line.
-    static func lines(of text: String) -> [String] {
-        text.components(separatedBy: "\n")
-            .map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+    static func lines(of data: Data) -> [String] {
+        data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+            .map { line in FTPNameEncoding.decode(line.last == UInt8(ascii: "\r") ? line.dropLast() : line) }
             .filter { !$0.allSatisfy(\.isWhitespace) }
     }
 
