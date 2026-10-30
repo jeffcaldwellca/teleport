@@ -8,12 +8,17 @@ import TeleportKit
 /// Watching is done by polling the file's modification time rather than a
 /// file-descriptor source: editors typically save atomically (write-to-temp +
 /// rename), which silently detaches fd-based watchers.
+///
+/// Sessions outlive the app: an editor window can stay open across a quit,
+/// and its next save should still reach the server. They are saved, picked
+/// up again at launch (`restore`), and their folders spared by the launch
+/// sweep of temporary files.
 @MainActor
 final class RemoteEditManager {
 
     static let shared = RemoteEditManager()
 
-    private struct Session {
+    private struct Session: Codable {
         let localURL: URL
         let connection: Connection
         let remotePath: String
@@ -26,15 +31,23 @@ final class RemoteEditManager {
         var missingTicks: Int = 0
     }
 
-    private var sessions: [Session] = []
+    private var sessions: [Session] = [] { didSet { persist() } }
     private var pollTask: Task<Void, Never>?
+    private let defaults: UserDefaults
+    private static let defaultsKey = "com.teleport.remoteEditSessions"
+
+    /// A session whose copy hasn't been touched for this long is dropped at
+    /// launch, and its folder swept.
+    static let maximumIdle: TimeInterval = 7 * 24 * 60 * 60
 
     /// Injected by the UI at startup. Returns false when the upload was
     /// dropped (e.g. an identical upload is already pending) so the change
     /// stays marked dirty and is retried on a later tick.
     var enqueueUpload: ((Connection, URL, String) -> Bool)?
 
-    private init() {}
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     func beginEditing(localURL: URL, connection: Connection, remotePath: String) {
         let mtime = Self.mtime(of: localURL) ?? Date()
@@ -44,6 +57,40 @@ final class RemoteEditManager {
             lastSeenMtime: mtime, lastUploadedMtime: mtime
         ))
         startPolling()
+    }
+
+    /// The local copy already open for this remote file, if any. Editing the
+    /// file again should reopen it: a second copy would leave the first
+    /// editor window's next save to upload older content over newer.
+    func existingCopy(connectionID: UUID, remotePath: String) -> URL? {
+        sessions.first {
+            $0.connection.id == connectionID && $0.remotePath == remotePath
+                && FileManager.default.fileExists(atPath: $0.localURL.path)
+        }?.localURL
+    }
+
+    /// Picks up the sessions of an earlier run whose copies are still there
+    /// and recently touched, and returns their folders, which the launch
+    /// sweep must leave alone.
+    @discardableResult
+    func restore(now: Date = Date()) -> Set<URL> {
+        guard let data = defaults.data(forKey: Self.defaultsKey),
+              let saved = try? JSONDecoder().decode([Session].self, from: data) else { return [] }
+        sessions = saved.filter { session in
+            guard let mtime = Self.mtime(of: session.localURL) else { return false }
+            return now.timeIntervalSince(mtime) < Self.maximumIdle
+        }.map { session in
+            var session = session
+            session.missingTicks = 0
+            return session
+        }
+        if !sessions.isEmpty { startPolling() }
+        return Set(sessions.map { $0.localURL.deletingLastPathComponent().standardizedFileURL })
+    }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(sessions) else { return }
+        defaults.set(data, forKey: Self.defaultsKey)
     }
 
     private func startPolling() {

@@ -1124,6 +1124,11 @@ struct FileListView: View {
     private func editRemote(_ item: FileItem) {
         guard let session = remoteSession,
               let safeName = RemotePath.sanitizedFilename(item.name) else { return }
+        // Already open: bring that copy back rather than make a second one.
+        if let open = RemoteEditManager.shared.existingCopy(connectionID: session.connection.id, remotePath: item.path) {
+            NSWorkspace.shared.open(open)
+            return
+        }
         let dir = FileManager.default.temporaryDirectory
             .appending(component: "Edit-\(UUID().uuidString)", directoryHint: .isDirectory)
         let local = dir.appending(component: safeName)

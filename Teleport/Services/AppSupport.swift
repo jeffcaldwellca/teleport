@@ -25,16 +25,20 @@ enum FileListDate {
 /// Remote files fetched for editing, previewing, duplicating or dragging out
 /// are staged in per-use folders under the temporary directory. Nothing
 /// removes them while the app runs (an editor may still have the file open),
-/// so leftovers from earlier runs are swept at launch.
+/// so leftovers from earlier runs are swept at launch — except the folders in
+/// `keeping`, which hold copies still being edited (see RemoteEditManager).
 enum TemporaryFiles {
     private static let prefixes = ["Edit-", "Duplicate-", "Drag-"]
     private static let exactNames = ["QuickLook"]
 
-    static func sweepStale(in base: URL = FileManager.default.temporaryDirectory) {
+    static func sweepStale(in base: URL = FileManager.default.temporaryDirectory, keeping: Set<URL> = []) {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: base.path) else { return }
+        let kept = Set(keeping.map(\.standardizedFileURL.path))
         for name in names where exactNames.contains(name) || prefixes.contains(where: name.hasPrefix) {
-            try? fm.removeItem(at: base.appending(component: name))
+            let folder = base.appending(component: name)
+            guard !kept.contains(folder.standardizedFileURL.path) else { continue }
+            try? fm.removeItem(at: folder)
         }
     }
 }

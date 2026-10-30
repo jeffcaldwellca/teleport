@@ -7,7 +7,7 @@ struct TeleportApp: App {
     @State private var appState = AppState()
 
     init() {
-        TemporaryFiles.sweepStale()
+        TemporaryFiles.sweepStale(keeping: RemoteEditManager.shared.restore())
         // One window: all of them would share this AppState, and every menu
         // command would then run once per window. Sessions have their own
         // tabs inside the window; the system's window tab bar (and its "+",
