@@ -31,6 +31,12 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Build tport (warms the SwiftPM cache for the CLI tests)
+        # As in ci.yml: CLIIntegrationTests runs `swift build --product tport`
+        # inside the test process, and a cold build takes minutes, far past
+        # the per-test allowance below.
+        run: cd TeleportKit && swift build --product tport
+
       - name: Test
         run: |
           xcodebuild test \
