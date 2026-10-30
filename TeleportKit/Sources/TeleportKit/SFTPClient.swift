@@ -477,18 +477,24 @@ public actor SFTPClient: RemoteClient {
     // MARK: - Disconnect
 
     public func disconnect() async {
-        let sftp = self.sftp, ssh = self.ssh
-        self.sftp = nil
-        self.ssh = nil
         // Closing politely waits on the server. One that has stopped answering
         // mustn't hold the disconnect up (the transfer queue disconnects after
         // a stalled transfer); shutting the event loop down closes the socket
         // either way.
-        await waitAtMost(.seconds(3), for: Task {
-            try? await sftp?.close()
-            try? await ssh?.close()
-        })
+        await waitAtMost(.seconds(3), for: Task { await self.closePolitely() })
+        // Let go of the clients before the loop shuts down: freeing them
+        // schedules work on it, and work scheduled on a loop that has shut
+        // down is an error in SwiftNIO (a crash in later versions). The close
+        // above reads them through `self` rather than keeping copies, so after
+        // a normal close these are the last references.
+        sftp = nil
+        ssh = nil
         await eventLoopGroup.shutdown()
+    }
+
+    private func closePolitely() async {
+        try? await sftp?.close()
+        try? await ssh?.close()
     }
 
     // MARK: - List Directory
