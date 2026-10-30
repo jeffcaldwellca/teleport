@@ -13,21 +13,9 @@ struct BrowserPaneView: View {
     @Environment(AppState.self) private var appState
     @State private var showingNewFolder = false
     @State private var showingGoToFolder = false
-    @State private var autoRefreshTask: Task<Void, Never>?
 
     /// This pane is the target for keyboard commands (refresh, navigate, …).
     private var isActive: Bool { appState.focusedPane == side }
-
-    /// Refresh shortly after transfers land so new files appear without a
-    /// manual refresh. Debounced: a batch of completions triggers one reload.
-    private func scheduleAutoRefresh() {
-        autoRefreshTask?.cancel()
-        autoRefreshTask = Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled, !vm.isLoading else { return }
-            await vm.refresh()
-        }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -111,12 +99,11 @@ struct BrowserPaneView: View {
             // Downloads land in the local pane, uploads in the remote pane.
             // Uploads are refreshed per session by AppState, whether or not
             // that session is the one on screen.
-            if vm.isLocal, note.userInfo?["direction"] as? String == "download" { scheduleAutoRefresh() }
+            if vm.isLocal, note.userInfo?["direction"] as? String == "download" { vm.scheduleRefresh() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .localFilesChanged)) { _ in
-            if vm.isLocal { scheduleAutoRefresh() }
+            if vm.isLocal { vm.scheduleRefresh() }
         }
-        .onDisappear { autoRefreshTask?.cancel() }
     }
 
     /// Jump straight to a typed path — the only way into a folder whose

@@ -71,6 +71,7 @@ final class BrowserViewModel {
 
     func close() {
         isClosed = true
+        scheduledRefresh?.cancel()
     }
 
     // MARK: Local init
@@ -126,13 +127,38 @@ final class BrowserViewModel {
         await load(path: currentPath, mode: .reload)
     }
 
+    /// How long transfer completions are coalesced before a reload.
+    var refreshDebounce: Duration = .milliseconds(600)
+    private var scheduledRefresh: Task<Void, Never>?
+
+    /// Reload shortly after transfers land so new files appear without a
+    /// manual refresh. Debounced: a batch of completions is one reload.
+    ///
+    /// Only the wait is cancellable. A completion that lands while a reload is
+    /// already listing restarts the timer rather than cancelling the listing —
+    /// cancelling it mid-way would surface as an error, and on FTP would leave
+    /// the listing's reply unread on the control connection. If a listing is
+    /// still running when the timer fires, wait again so the files that landed
+    /// after it started still show up.
+    func scheduleRefresh() {
+        scheduledRefresh?.cancel()
+        scheduledRefresh = Task { [weak self] in
+            guard let delay = self?.refreshDebounce else { return }
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled, !self.isClosed else { return }
+            if self.isLoading { self.scheduleRefresh(); return }
+            self.scheduledRefresh = nil     // past the wait: nothing cancels this reload
+            await self.refresh()
+        }
+    }
+
     /// List a remote directory, transparently reconnecting once if the session
     /// looks dropped (idle timeout, network blip) so browsing self-heals.
     private func remoteListing(_ client: RemoteClient, at path: String) async throws -> [FileItem] {
         do {
             return try await client.listDirectory(at: path)
         } catch {
-            guard !isClosed, Self.isLikelyConnectionDrop(error) else { throw error }
+            guard !isClosed, !Task.isCancelled, Self.isLikelyConnectionDrop(error) else { throw error }
             try await client.connect()                  // re-establish in place
             return try await client.listDirectory(at: path)
         }
@@ -141,6 +167,7 @@ final class BrowserViewModel {
     /// Distinguishes a dropped/unreachable connection (worth a reconnect) from a
     /// logical error like permission-denied or not-found (don't reconnect).
     private static func isLikelyConnectionDrop(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
         if let e = error as? RemoteClientError {
             switch e {
             case .permissionDenied, .fileNotFound, .unsupported,
@@ -197,6 +224,8 @@ final class BrowserViewModel {
             if mode == .reload {
                 selectedItems.formIntersection(Set(raw.map(\.id)))
             }
+        } catch where error is CancellationError || Task.isCancelled {
+            // Abandoned, not failed: keep showing the folder we had.
         } catch {
             loadError     = error.localizedDescription
             attemptedPath = path

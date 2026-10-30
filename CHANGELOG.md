@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Long upload queues no longer flash a CancellationError in the remote
+  pane.** Each finished upload reloads the folder shortly after, and a
+  completion that arrived while that reload was still listing cancelled it,
+  leaving "The operation couldn’t be completed. (Swift.CancellationError
+  error 1.)" and a Retry button in place of the file list. The reload now
+  runs to the end and another follows once it's done. The local pane's
+  reload after downloads had the same problem and is fixed too.
+
 ## 1.2.0
 
 ### New

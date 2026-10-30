@@ -255,7 +255,6 @@ final class RemoteSession: Identifiable {
     var connectionError: String? = nil
 
     private var keepAliveTask: Task<Void, Never>?
-    private var refreshTask: Task<Void, Never>?
 
     init(connection: Connection, client: RemoteClient) {
         self.connection = connection
@@ -278,21 +277,15 @@ final class RemoteSession: Identifiable {
 
     func disconnect() async {
         browser.close()
-        refreshTask?.cancel()
         keepAliveTask?.cancel()
         keepAliveTask = nil
         await client.disconnect()
     }
 
     /// Re-list shortly after uploads land so new files appear without a
-    /// manual refresh. Debounced: a batch of completions is one reload.
+    /// manual refresh.
     func scheduleRefresh() {
-        refreshTask?.cancel()
-        refreshTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard let self, !Task.isCancelled, !self.browser.isLoading else { return }
-            await self.browser.refresh()
-        }
+        browser.scheduleRefresh()
     }
 
     /// Periodically ping the server so an idle session isn't dropped. Harmless
