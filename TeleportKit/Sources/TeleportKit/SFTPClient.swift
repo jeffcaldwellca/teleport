@@ -89,7 +89,29 @@ public actor SFTPClient: RemoteClient {
 
     // MARK: - Connect
 
+    /// The connect under way, if any; see `connect()`.
+    private var connectInFlight: Task<Void, Error>?
+
     public func connect() async throws {
+        // Callers that reconnect at the same moment (a navigation and a
+        // scheduled refresh both finding the session dropped) share one
+        // attempt. Run separately, the second tore down the first's half-built
+        // session, the first's failure then closed the second's, and both
+        // asked for the key's passphrase or a one-time code.
+        if let inFlight = connectInFlight { return try await inFlight.value }
+        let attempt = Task { try await performConnect() }
+        connectInFlight = attempt
+        defer { connectInFlight = nil }
+        // The caller that started it can still call it off (a tab closed or a
+        // transfer cancelled mid-login), as when it ran in the caller's task.
+        try await withTaskCancellationHandler {
+            try await attempt.value
+        } onCancel: {
+            attempt.cancel()
+        }
+    }
+
+    private func performConnect() async throws {
         // Reconnect-safe: tear down any previous session first so a reconnect
         // (e.g. the browser's self-heal path) doesn't leak the old SSH channel
         // and its NIO resources.
