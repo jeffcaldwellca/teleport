@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5.9, SwiftUI (macOS 14), Observation, XCTest.
 
-**Spec:** `docs/superpowers/specs/2026-10-13-multiple-sessions-design.md`
+**Spec:** `superpowers/specs/2026-10-13-multiple-sessions-design.md`
 
 ## Global Constraints
 

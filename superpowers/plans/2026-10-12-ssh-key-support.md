@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5.9, Citadel 0.8+, SwiftNIO SSH, CryptoKit, SwiftUI, swift-argument-parser, XCTest.
 
-**Spec:** `docs/superpowers/specs/2026-10-12-ssh-key-support-design.md`
+**Spec:** `superpowers/specs/2026-10-12-ssh-key-support-design.md`
 
 ## Global Constraints
 

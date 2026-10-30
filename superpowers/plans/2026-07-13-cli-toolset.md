@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Full spec: `docs/superpowers/specs/2026-07-13-cli-toolset-design.md`. Every task below implements one section of it.
+- Full spec: `superpowers/specs/2026-07-13-cli-toolset-design.md`. Every task below implements one section of it.
 - CLI binary name is `tport` (not `teleport` — collides with Gravitational Teleport's `teleport`/`tsh`).
 - CLI is stateless: no dependency on `ConnectionStore`/Keychain. Auth via `--password` / `TELEPORT_PASSWORD` / `--password-stdin` / `--identity`.
 - Host keys fail closed by default; `--accept-new-hostkey` trusts on first use; a changed key always hard-fails (no override).

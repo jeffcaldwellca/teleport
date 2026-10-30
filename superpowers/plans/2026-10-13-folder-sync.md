@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5.9, TeleportKit, swift-argument-parser, SwiftUI, XCTest.
 
-**Spec:** `docs/superpowers/specs/2026-10-13-folder-sync-design.md`
+**Spec:** `superpowers/specs/2026-10-13-folder-sync-design.md`
 
 ## Global Constraints
 
