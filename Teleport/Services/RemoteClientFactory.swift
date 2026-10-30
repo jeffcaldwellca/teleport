@@ -28,16 +28,23 @@ enum RemoteClientFactory {
                 password: password,
                 hostKeyStore: .shared,
                 keyReader: { url in
-                    if let data = await MainActor.run(body: {
-                        try? BookmarkStore.shared.withAccess(
-                            name: BookmarkStore.sshKeyName(for: connection.id)
-                        ) { try Data(contentsOf: $0) }
-                    }) ?? nil {
-                        return data
-                    }
+                    // The configured path wins. The bookmark is there to find
+                    // the key after it has been moved, and it's saved as soon
+                    // as a file is picked in the editor, so it can name a file
+                    // the connection no longer uses (a different key typed in
+                    // later, or a pick abandoned with Cancel). Reading it first
+                    // offered that key instead, and the passphrase sheet, which
+                    // checks against the configured path, could never unlock it.
                     do {
                         return try Data(contentsOf: url)
                     } catch {
+                        if let data = await MainActor.run(body: {
+                            try? BookmarkStore.shared.withAccess(
+                                name: BookmarkStore.sshKeyName(for: connection.id)
+                            ) { try Data(contentsOf: $0) }
+                        }) ?? nil {
+                            return data
+                        }
                         throw RemoteClientError.unknown(
                             "Could not read SSH key at \(url.path): \(error.localizedDescription). " +
                             "Check that the file exists and is readable, or choose the key again in the connection editor."
