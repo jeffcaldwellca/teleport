@@ -13,6 +13,7 @@
 		278BD8FAB7B0BCED7A6E2CC4 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 801B05886CD72901068956E5 /* AppState.swift */; };
 		3ED390AE22DCD16CC13BBF2C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8D05848D64FCD686BABC00 /* ContentView.swift */; };
 		412CC0BDB34B8C9271424B41 /* SyncViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5676B4B9A26C629384614157 /* SyncViewModel.swift */; };
+		45406C0E7D718E9D69F49C54 /* PermissionsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 649305518A5FEE01F24ABA49 /* PermissionsParsingTests.swift */; };
 		46B17803D4BAF873DDB5CD32 /* SSHHostKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CC2C4189808F11BDE3E78AA /* SSHHostKeyStoreTests.swift */; };
 		4733F7D2AFD12E11DDBF6F48 /* BrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B4C6C54C5E2B2010633CE0 /* BrowserViewModel.swift */; };
 		4B8340FB6F56834BF7A5F0D3 /* LocalFileDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5790B538AD444BCE1388545 /* LocalFileDrop.swift */; };
@@ -105,6 +106,7 @@
 		5D663757B1665172D76E0DAB /* CommandLineToolInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandLineToolInstaller.swift; sourceTree = "<group>"; };
 		63EE900E42C5EE5922F84386 /* TeleportTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeleportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		645091BFA5461EF2A50D5B73 /* PersistentHSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentHSplitView.swift; sourceTree = "<group>"; };
+		649305518A5FEE01F24ABA49 /* PermissionsParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsParsingTests.swift; sourceTree = "<group>"; };
 		650C333D02DB7AE181BAF4E2 /* SSHConfigImportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConfigImportSheet.swift; sourceTree = "<group>"; };
 		68E09A53E47A7183B9706F42 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6CCB679B96C10DA58F5511AF /* TransferQueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueueViewModel.swift; sourceTree = "<group>"; };
@@ -240,6 +242,7 @@
 				A3BA2953683D09F359506EED /* HostKeyConfirmationTests.swift */,
 				9CEF06B490E9771755881FDE /* LocalFileServiceTests.swift */,
 				0EF24DB9F0F4FBC7CA27DF2E /* PassphrasePromptTests.swift */,
+				649305518A5FEE01F24ABA49 /* PermissionsParsingTests.swift */,
 				C130DEB5DDFF9D7EC561F1FA /* PreferencesTests.swift */,
 				52010299A996107540DC1CB6 /* RemoteClientErrorTests.swift */,
 				CDC0FA7C9AF641A06F052B1B /* RemoteFileRefTests.swift */,
@@ -423,6 +426,7 @@
 				5423CE2440C672B715811C88 /* HostKeyConfirmationTests.swift in Sources */,
 				C15102BF90C1D71CA39AFC70 /* LocalFileServiceTests.swift in Sources */,
 				C83CC31C511C14AB33B35D4F /* PassphrasePromptTests.swift in Sources */,
+				45406C0E7D718E9D69F49C54 /* PermissionsParsingTests.swift in Sources */,
 				89ADC2A9441653B33A5095B3 /* PreferencesTests.swift in Sources */,
 				8629C8E19BC3D2BFC47C258E /* RemoteClientErrorTests.swift in Sources */,
 				A2530589A4D690BA294A642F /* RemoteFileRefTests.swift in Sources */,

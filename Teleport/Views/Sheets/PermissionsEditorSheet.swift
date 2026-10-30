@@ -16,6 +16,14 @@ struct PermissionsEditorSheet: View {
     @State private var owner  = ""
     @State private var group  = ""
 
+    // What the sheet opened with. Apply sends only what the user changed:
+    // the listing's owner/group often aren't in a form the server accepts
+    // back (names over SFTP, any chown over FTP), and permissions the
+    // listing didn't report are only a starting guess.
+    @State private var loadedOctal = 0
+    @State private var loadedOwner = ""
+    @State private var loadedGroup = ""
+
     @State private var isApplying  = false
     @State private var errorMessage: String? = nil
 
@@ -54,7 +62,7 @@ struct PermissionsEditorSheet: View {
     private var ownershipChanged: Bool {
         let o = owner.trimmingCharacters(in: .whitespaces)
         let g = group.trimmingCharacters(in: .whitespaces)
-        return !o.isEmpty || !g.isEmpty
+        return (o != loadedOwner || g != loadedGroup) && (!o.isEmpty || !g.isEmpty)
     }
 
     // MARK: - Body
@@ -222,13 +230,16 @@ struct PermissionsEditorSheet: View {
     private func loadCurrentValues() {
         owner = item.owner ?? ""
         group = item.group ?? ""
+        loadedOwner = owner
+        loadedGroup = group
 
         let octal: Int
         if let p = item.permissions {
             octal = Self.parsePermissions(p)
         } else {
-            octal = 0o644
+            octal = item.isDirectory ? 0o755 : 0o644
         }
+        loadedOctal = octal
 
         suid   = (octal & 0o4000) != 0
         sgid   = (octal & 0o2000) != 0
@@ -242,11 +253,15 @@ struct PermissionsEditorSheet: View {
         isApplying = true
         errorMessage = nil
         do {
-            try await session.client.setPermissions(octalValue, at: item.path)
-            let o = owner.trimmingCharacters(in: .whitespaces)
-            let g = group.trimmingCharacters(in: .whitespaces)
-            if !o.isEmpty || !g.isEmpty {
-                try await session.client.setOwnership(owner: o, group: g, at: item.path)
+            if octalValue != loadedOctal {
+                try await session.client.setPermissions(octalValue, at: item.path)
+            }
+            if ownershipChanged {
+                try await session.client.setOwnership(
+                    owner: owner.trimmingCharacters(in: .whitespaces),
+                    group: group.trimmingCharacters(in: .whitespaces),
+                    at: item.path
+                )
             }
             dismiss()
         } catch {
@@ -268,8 +283,18 @@ struct PermissionsEditorSheet: View {
         let chars = Array(trimmed.suffix(9))
         guard chars.count == 9 else { return 0o644 }
         let weights = [0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001]
-        return zip(chars, weights).reduce(0) { acc, pair in
-            acc | (pair.0 == "-" ? 0 : pair.1)
+        // The execute columns also carry setuid / setgid / sticky: lowercase
+        // (s, t) means the special bit plus execute, uppercase only the bit.
+        let specials = [2: 0o4000, 5: 0o2000, 8: 0o1000]
+        var mode = 0
+        for (index, (char, weight)) in zip(chars, weights).enumerated() {
+            if let special = specials[index], "sStT".contains(char) {
+                mode |= special
+                if char.isLowercase { mode |= weight }
+            } else if char != "-" {
+                mode |= weight
+            }
         }
+        return mode
     }
 }
