@@ -115,11 +115,7 @@ final class TransferQueueViewModel {
         remotePath: String,
         conflictBehavior: ConflictResolution? = nil
     ) -> TransferTask? {
-        // "Apply to all remaining conflicts" scopes to one batch: once every
-        // prior task has finished, a fresh enqueue starts a new batch.
-        if !tasks.contains(where: { !$0.status.isFinal }) {
-            batchResolution = nil
-        }
+        endBatchIfIdle()
 
         // Refuse duplicates of a still-pending transfer to the same destination —
         // two workers writing the same local file interleave and corrupt it.
@@ -160,9 +156,7 @@ final class TransferQueueViewModel {
         conflictBehavior: ConflictResolution? = nil
     ) -> [TransferTask] {
         guard !items.isEmpty else { return [] }
-        if !tasks.contains(where: { !$0.status.isFinal }) {
-            batchResolution = nil
-        }
+        endBatchIfIdle()
         func key(_ local: URL, _ remote: String) -> String { "\(local.path)\u{0}\(remote)" }
         var pending = Set(
             tasks.lazy
@@ -182,6 +176,16 @@ final class TransferQueueViewModel {
         setVisible(true)
         startWorkers()
         return created
+    }
+
+    /// "Apply to all remaining conflicts" scopes to one batch: once nothing
+    /// is queued or running, a fresh enqueue starts a new batch. A paused
+    /// task doesn't keep the old batch open — otherwise a choice made for one
+    /// drag would silently apply to an unrelated one later.
+    private func endBatchIfIdle() {
+        if !tasks.contains(where: { !$0.status.isFinal && $0.status != .paused }) {
+            batchResolution = nil
+        }
     }
 
     // MARK: - Queue Processing
@@ -228,10 +232,6 @@ final class TransferQueueViewModel {
     }
 
     private func workerLoop() async {
-        defer {
-            workerCount -= 1
-            reportIdleIfDrained()
-        }
         // The connection this worker keeps between tasks, so a run of files
         // for one server costs a single login instead of one per file.
         let kept = KeptConnection()
@@ -243,7 +243,12 @@ final class TransferQueueViewModel {
             await handle.value
             transferHandles.removeValue(forKey: task.id)
         }
+        // Stop counting as a worker before logging out: a task enqueued during
+        // that round trip would otherwise find the worker limit reached, start
+        // no one, and wait in the queue until something else was added.
+        workerCount -= 1
         await kept.close()
+        reportIdleIfDrained()
     }
 
     /// A worker's idle connection, held between tasks.
@@ -396,9 +401,15 @@ final class TransferQueueViewModel {
                 )
                 switch effectiveResolution {
                 case .skip:
-                    // Preserve .cancelled if the user cancelled while the
-                    // dialog was up; otherwise this is a deliberate skip.
-                    task.status = task.status == .cancelled ? .cancelled : .skipped
+                    // Cancel or Pause while the dialog was up (or while waiting
+                    // behind another one) dismisses it as a skip; that's an
+                    // interruption, not the user's answer. Pause in particular
+                    // must leave the task resumable, and asked again on resume.
+                    if task.pauseRequested || task.status == .cancelled || Task.isCancelled {
+                        settleInterruption(task)
+                    } else {
+                        task.status = .skipped
+                    }
                     return
                 case .autoRename:
                     if task.direction == .download {
@@ -614,6 +625,8 @@ final class TransferQueueViewModel {
         // Only one dialog at a time — concurrent transfers queue here.
         await acquireConflictGate()
         defer { releaseConflictGate() }
+        // Cancelled or paused while waiting for the gate: same reasoning as above.
+        if Task.isCancelled || task.status == .cancelled { return .skip }
         // A dialog we waited behind may have set an "apply to all" resolution.
         if let batch = batchResolution { return batch }
 
@@ -723,7 +736,10 @@ final class TransferQueueViewModel {
     func resume(_ task: TransferTask) {
         guard task.status == .paused else { return }
         task.pauseRequested = false
-        task.resumeOnNextAttempt = true  // attempt 0 must append, not truncate
+        // Append only to bytes this task wrote itself. Paused before it got
+        // that far, whatever is at the destination is someone else's file:
+        // start clean, and ask about it first.
+        task.resumeOnNextAttempt = task.transferStarted
         task.status = .queued
         queuedSearchStart = 0
         startWorkers()
@@ -784,14 +800,15 @@ final class TransferQueueViewModel {
     }
 
     private func resetForRetry(_ task: TransferTask) {
+        // A failed download kept its staged bytes — continue from them, if it
+        // got far enough to write any. (The conflict was settled before it
+        // did; one that failed earlier still has its question to ask.)
+        task.resumeOnNextAttempt = task.direction == .download && task.transferStarted
         task.retryCount          = 0
         task.bytesTransferred    = 0
         task.progress            = 0
         task.pauseRequested      = false
         task.transferStarted     = false
-        // A failed download kept its staged bytes — continue from them. The
-        // conflict was already settled on the first run.
-        task.resumeOnNextAttempt = task.direction == .download
         task.status              = .queued
         queuedSearchStart        = 0
     }

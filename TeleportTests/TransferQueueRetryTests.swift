@@ -12,6 +12,8 @@ private final class ScriptedClient: RemoteClient, @unchecked Sendable {
         private var _failingPings: Int
         private var _connectCount = 0
         private var _uploadResumeFlags: [Bool] = []
+        /// How long `disconnect()` takes, like a QUIT round trip.
+        var disconnectDelay: Duration = .zero
         /// Whether upload destinations already exist (i.e. every upload conflicts).
         let destinationsExist: Bool
         init(failingConnects: Int = 0, failingPings: Int = 0, destinationsExist: Bool = true) {
@@ -54,7 +56,10 @@ private final class ScriptedClient: RemoteClient, @unchecked Sendable {
     func ping() async throws {
         if script.shouldFailPing() { throw RemoteClientError.notConnected }
     }
-    func disconnect() async { script.recordDisconnect() }
+    func disconnect() async {
+        if script.disconnectDelay > .zero { try? await Task.sleep(for: script.disconnectDelay) }
+        script.recordDisconnect()
+    }
     func listDirectory(at absolutePath: String) async throws -> [FileItem] { [] }
     func download(remotePath: String, to localURL: URL, resume: Bool,
                   progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {}
@@ -267,5 +272,108 @@ final class TransferQueueRetryTests: XCTestCase {
             XCTFail("The work's error should propagate")
         } catch is Boom {}
         XCTAssertEqual(script.disconnectCount, 2)
+    }
+
+    private func makeQueue(_ script: ScriptedClient.Script) -> TransferQueueViewModel {
+        TransferQueueViewModel(
+            passwordProvider: { _ in "" },
+            clientFactory: { _, _ in ScriptedClient(script: script) }
+        )
+    }
+
+    /// Pausing a transfer that never started leaves nothing of its own at the
+    /// destination: Resume must still ask about the existing file, and must
+    /// not append to it.
+    func test_resumingATransferPausedBeforeItStarted_asksAboutTheConflict_andDoesNotAppend() async throws {
+        let script = ScriptedClient.Script()
+        let queue = makeQueue(script)
+        let task = try XCTUnwrap(queue.enqueue(
+            connection: Connection(host: "example.invalid"), direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/existing.txt"
+        ))
+        queue.pause(task)                       // still queued: no worker has run yet
+        XCTAssertEqual(task.status, .paused)
+
+        queue.resume(task)
+        try await waitUntil("conflict prompt or a finished task") {
+            queue.pendingConflict != nil || task.status.isFinal
+        }
+        XCTAssertNotNil(queue.pendingConflict, "Resume must still ask before overwriting")
+        queue.resolveConflict(.overwrite, applyToAll: false)
+
+        try await waitUntil("completed") { task.status.isFinal }
+        XCTAssertEqual(script.uploadResumeFlags, [false])
+    }
+
+    /// Pause pressed while the "file exists" dialog is up must pause, not
+    /// skip: Skipped is final and can't be resumed.
+    func test_pausingWhileTheConflictDialogIsUp_pausesTheTask() async throws {
+        let script = ScriptedClient.Script()
+        let queue = makeQueue(script)
+        let task = try XCTUnwrap(queue.enqueue(
+            connection: Connection(host: "example.invalid"), direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/existing.txt"
+        ))
+        try await waitUntil("conflict prompt") { queue.pendingConflict != nil }
+
+        queue.pause(task)
+        try await waitUntil("settled") { task.status == .paused || task.status.isFinal }
+        XCTAssertEqual(task.status, .paused)
+        XCTAssertNil(queue.pendingConflict)
+
+        queue.resume(task)
+        try await waitUntil("asked again") { queue.pendingConflict != nil || task.status.isFinal }
+        XCTAssertNotNil(queue.pendingConflict)
+        queue.resolveConflict(.skip, applyToAll: false)
+        try await waitUntil("skipped") { task.status.isFinal }
+    }
+
+    /// A transfer added while the last worker is logging out of the server
+    /// must still run, not sit in the queue until something else is added.
+    func test_aTransferAddedWhileTheLastWorkerIsClosingItsConnection_stillRuns() async throws {
+        let script = ScriptedClient.Script(destinationsExist: false)
+        script.disconnectDelay = .milliseconds(500)
+        let queue = makeQueue(script)
+        let connection = Connection(host: "example.invalid")
+        let first = try XCTUnwrap(queue.enqueue(
+            connection: connection, direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/first.txt"
+        ))
+        try await waitUntil("first completed") { first.status == .completed }
+
+        let second = try XCTUnwrap(queue.enqueue(
+            connection: connection, direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/second.txt"
+        ))
+        try await waitUntil("second completed", timeout: 5) { second.status == .completed }
+    }
+
+    /// "Apply to all" belongs to the batch it was chosen in. A paused task
+    /// left over from that batch must not carry it into an unrelated one.
+    func test_applyToAll_doesNotCarryIntoALaterBatch_whileATaskIsPaused() async throws {
+        let script = ScriptedClient.Script()
+        let queue = makeQueue(script)
+        let connection = Connection(host: "example.invalid")
+        let parked = try XCTUnwrap(queue.enqueue(
+            connection: connection, direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/parked.txt"
+        ))
+        queue.pause(parked)
+        let first = try XCTUnwrap(queue.enqueue(
+            connection: connection, direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/a.txt"
+        ))
+        try await waitUntil("conflict prompt") { queue.pendingConflict != nil }
+        queue.resolveConflict(.overwrite, applyToAll: true)
+        try await waitUntil("first completed") { first.status == .completed }
+
+        let later = try XCTUnwrap(queue.enqueue(
+            connection: connection, direction: .upload,
+            localURL: try makeLocalFile(), remotePath: "/b.txt"
+        ))
+        try await waitUntil("asked or finished") { queue.pendingConflict != nil || later.status.isFinal }
+        XCTAssertNotNil(queue.pendingConflict, "A new batch must ask again")
+        queue.resolveConflict(.skip, applyToAll: false)
+        try await waitUntil("later settled") { later.status.isFinal }
     }
 }
