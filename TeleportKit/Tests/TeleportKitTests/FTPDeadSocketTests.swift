@@ -1,5 +1,5 @@
 import XCTest
-import TeleportKit
+@testable import TeleportKit
 
 /// `FTPClient` against a scripted in-process server that closes the control
 /// connection: writes to the dead socket must fail cleanly.
@@ -71,5 +71,27 @@ final class FTPDeadSocketTests: XCTestCase {
         } catch RemoteClientError.notConnected {
             // expected
         }
+    }
+
+    func test_pingAnsweredWithAnythingButSuccess_failsAndDropsTheSession() async throws {
+        server.noopReply = "421 Timeout"
+        let client = makeClient()
+        try await client.connect()
+
+        do {
+            try await client.ping()
+            XCTFail("A 421 must not count as a live connection")
+        } catch {}
+        do {
+            _ = try await client.listDirectory(at: "/")
+            XCTFail("The session should have been dropped")
+        } catch RemoteClientError.notConnected {}
+    }
+
+    func test_timestamps_areGregorianUTC_whateverTheUsersCalendar() {
+        let fmt = FTPClient.timestampFormatter()
+        let date = fmt.date(from: "20240305120000")
+        XCTAssertEqual(date?.timeIntervalSince1970, 1_709_640_000)
+        XCTAssertEqual(fmt.calendar.identifier, .gregorian)
     }
 }

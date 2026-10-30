@@ -908,12 +908,12 @@ public actor FTPClient: RemoteClient {
     // MARK: - Keep-Alive
 
     public func ping() async throws {
-        try sendCommand("NOOP")
+        try noop()
     }
 
     public func keepAlive() async {
         do {
-            try sendCommand("NOOP")
+            try noop()
         } catch {
             // The session is gone. Drop the socket so the next operation
             // reports "not connected" (and reconnects) straight away instead
@@ -921,6 +921,20 @@ public actor FTPClient: RemoteClient {
             socket?.close()
             socket = nil
             tlsActive = false
+        }
+    }
+
+    /// NOOP, answered with a 2xx. Anything else — a 421 the server sent as it
+    /// timed us out, or a stray reply from an earlier command — means the
+    /// session can't be trusted, and callers rely on that: the transfer queue
+    /// pings a kept connection before its "does the file exist?" check, which
+    /// would otherwise read a dead connection as "no such file" and overwrite
+    /// without asking.
+    private func noop() throws {
+        let reply = try sendCommand("NOOP")
+        guard (200..<300).contains(reply.code) else {
+            abandonSession()
+            throw FTPError.serverError(reply.code, reply.message)
         }
     }
 
@@ -936,19 +950,25 @@ public actor FTPClient: RemoteClient {
               resp.code == 213 else { return nil }
         // MDTM response format: "YYYYMMDDHHmmss" or "YYYYMMDDHHmmss.sss"
         let raw = resp.message.trimmingCharacters(in: .whitespaces)
-        let dateStr = String(raw.prefix(14))
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyyMMddHHmmss"
-        fmt.timeZone = TimeZone(identifier: "UTC")
-        return fmt.date(from: dateStr)
+        return Self.timestampFormatter().date(from: String(raw.prefix(14)))
     }
 
     public func setModifiedDate(_ date: Date, at remotePath: String) async {
         // RFC 3659 MFMT. Best-effort: servers without it just refuse.
+        _ = try? sendCommand("MFMT \(Self.timestampFormatter().string(from: date)) \(remotePath)")
+    }
+
+    /// RFC 3659 timestamps (MDTM, MFMT): Gregorian, UTC. Without a fixed
+    /// calendar and locale the formatter follows the user's settings, and a
+    /// Buddhist or Japanese calendar reads "2024…" as a year five centuries
+    /// out (and writes one).
+    static func timestampFormatter() -> DateFormatter {
         let fmt = DateFormatter()
-        fmt.dateFormat = "yyyyMMddHHmmss"
+        fmt.calendar = Calendar(identifier: .gregorian)
+        fmt.locale = Locale(identifier: "en_US_POSIX")
         fmt.timeZone = TimeZone(identifier: "UTC")
-        _ = try? sendCommand("MFMT \(fmt.string(from: date)) \(remotePath)")
+        fmt.dateFormat = "yyyyMMddHHmmss"
+        return fmt
     }
 
     public func createDirectory(at absolutePath: String) async throws {

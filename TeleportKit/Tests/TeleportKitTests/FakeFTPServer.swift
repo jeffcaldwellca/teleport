@@ -24,6 +24,7 @@ final class FakeFTPServer: @unchecked Sendable {
     private var _mlsdListing: String?
     private var _listReply: (String) -> String? = { _ in nil }
     private var _listingDelay: TimeInterval = 0
+    private var _noopReply = "200 ok"
 
     /// Every command line received, across all connections.
     var commands: [String] { lock.withLock { _commands } }
@@ -51,6 +52,12 @@ final class FakeFTPServer: @unchecked Sendable {
     var listingDelay: TimeInterval {
         get { lock.withLock { _listingDelay } }
         set { lock.withLock { _listingDelay = newValue } }
+    }
+
+    /// The reply to NOOP.
+    var noopReply: String {
+        get { lock.withLock { _noopReply } }
+        set { lock.withLock { _noopReply = newValue } }
     }
 
     var retr: Retr {
@@ -100,7 +107,8 @@ final class FakeFTPServer: @unchecked Sendable {
             let verb = line.split(separator: " ").first.map { $0.uppercased() } ?? ""
             switch verb {
             case "USER": Self.send(fd, "230 ok")
-            case "TYPE", "NOOP": Self.send(fd, "200 ok")
+            case "TYPE": Self.send(fd, "200 ok")
+            case "NOOP": Self.send(fd, noopReply)
             case "OPTS":
                 Self.send(fd, "200 ok")
                 if dropControlAfterLogin { return }
