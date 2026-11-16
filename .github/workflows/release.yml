@@ -74,6 +74,11 @@ jobs:
             -T /usr/bin/codesign \
             -T /usr/bin/security
 
+          # Apple's Developer ID G2 intermediate, so codesign can build a trusted chain for
+          # certificates issued after the original Developer ID Sub-CA retires (Feb 1, 2027).
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign || true
+
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
